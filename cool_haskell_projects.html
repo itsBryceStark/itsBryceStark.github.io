@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>Cool Projects in Haskell | Bryce Stark</title>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=0.5">
+		<link rel="stylesheet" type="text/css" href="style.css">
+	</head>
+	<body>
+		<a class="logo" href="index.html"></a>
+		<p><a href="/">Bryce Stark's Blog</a></p>
+		<h1 class="title">Cool Projects in Haskell</h1>
+		<div class="date">2025-10-14</div>
+<p>Here are some snippets of cool little example projects for the budding Haskell users!</p>
+
+<div class="sections">
+<div class="section-item"><a href="#pseudomarkdownparser">Pseudo-Markdown Parser</a></div>
+<div class="section-item"><a href="#webscraper">Web Scraper</a></div>
+<div class="section-item"><a href="#weatherapp">Weather App</a></div>
+<div class="section-item"><a href="#examplesoftransforms">Examples of Transforms</a></div>
+</div>
+<h2 id="pseudomarkdownparser"><a href="#pseudomarkdownparser">Pseudo-Markdown Parser</a></h2>
+<pre><code class="language-hs">main :: IO ()
+main = do
+    putStrLn &quot;Enter Pseudo-Markdown text (type 'exit' to quit):&quot;
+    input &lt;- getLine
+    if input == &quot;exit&quot;
+        then putStrLn &quot;Goodbye!&quot;
+        else do
+            putStrLn $ parsePseudoMarkdown input
+            main
+
+parsePseudoMarkdown :: String -&gt; String
+parsePseudoMarkdown input
+    | &quot;**&quot;   `isPrefixOf` input = &quot;&lt;strong&gt;&quot; ++ drop 2 (take (length input - 2) input) ++ &quot;&lt;/strong&gt;&quot;
+    | &quot;# &quot;   `isPrefixOf` input = &quot;&lt;h1&gt;&quot; ++ drop 2 input ++ &quot;&lt;/h1&gt;&quot;
+    | &quot;## &quot;  `isPrefixOf` input = &quot;&lt;h2&gt;&quot; ++ drop 3 input ++ &quot;&lt;/h2&gt;&quot;
+    | &quot;### &quot; `isPrefixOf` input = &quot;&lt;h3&gt;&quot; ++ drop 4 input ++ &quot;&lt;/h3&gt;&quot;
+    | &quot;_&quot;    `isPrefixOf` input = &quot;&lt;em&gt;&quot; ++ drop 1 (take (length input - 1) input) ++ &quot;&lt;/em&gt;&quot;
+    | otherwise = input
+</code></pre>
+
+<h2 id="webscraper"><a href="#webscraper">Web Scraper</a></h2>
+<pre><code class="language-hs">{-# LANGUAGE OverloadedStrings #-}
+
+import Network.HTTP.Simple
+import Text.HTML.TagSoup
+
+main :: IO ()
+main = do
+    response &lt;- httpLBS &quot;https://itsbrycestark.github.io&quot;
+    let html = getResponseBody response
+    let tags = parseTags html
+    mapM_ print (filter isTagText tags)
+
+isTagText :: Tag String -&gt; Bool
+isTagText (TagText _) = True
+isTagText _           = False
+</code></pre>
+
+<h2 id="weatherapp"><a href="#weatherapp">Weather App</a></h2>
+<pre><code class="language-hs">{-# LANGUAGE OverloadedStrings #-}
+
+import Network.HTTP.Simple
+import Data.Aeson
+import Control.Applicative
+
+data Weather = Weather { main :: String, description :: String } deriving (Show)
+
+instance FromJSON Weather where
+    parseJSON = withObject &quot;Weather&quot; $ \v -&gt; Weather
+        &lt;$&gt; v .: &quot;main&quot;
+        &lt;*&gt; v .: &quot;description&quot;
+
+main :: IO ()
+main = do
+    response &lt;- httpJSON &quot;http://api.openweathermap.org/data/2.5/weather?q=Seattle&amp;appid=YOUR_API_KEY&quot;
+    let weather = getResponseBody response :: Weather
+    putStrLn $ &quot;Weather: &quot; ++ main weather ++ &quot;, &quot; ++ description weather
+</code></pre>
+
+<h2 id="examplesoftransforms"><a href="#examplesoftransforms">Examples of Transforms</a></h2>
+<pre><code class="language-hs">{-# LANGUAGE PartialTypeSignatures #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE InstanceSigs #-}
+
+module Transformers where
+
+import Control.Monad.Except
+import Control.Monad.Identity
+import Control.Monad.Reader
+import Control.Monad.State
+import Control.Monad.Trans.Except
+import Control.Monad.Writer
+import Data.Maybe
+import qualified Data.Map as Map
+
+type Name = String
+data Expr = Literal Integer
+          | Abs Name Expr
+          | Plus Expr Expr
+          | App Expr Expr
+          | Variable Name
+            deriving (Show)
+
+data Value = IntVal Integer
+           | FunVal Env Name Expr
+             deriving (Show)
+
+type Env = Map.Map Name Value
+
+exampleValidExpr :: Expr
+exampleValidExpr = Literal 12 `Plus` (App (Abs &quot;x&quot; (Variable &quot;x&quot;))(Literal 4 `Plus` Literal 2))
+exampleInvalidExpr :: Expr
+exampleInvalidExpr = Literal 1 `Plus` (abs &quot;x&quot; (Variable &quot;x&quot;))
+
+eval0 :: Env -&gt; Expr -&gt; Value
+eval0 env (Literal i) = IntVal i
+eval0 env (Abs n e) = FunVal env n e
+eval0 env (Plus e1 e2) = let IntVal i1 = eval0 env e1
+                             IntVal i2 = eval0 env e2
+                         in IntVal (i1 +i2)
+eval0 env (App e1 e2) = let val1 = eval0 env e1
+                            val2 = eval0 env e2
+                        in case val1 of
+                            FunVal env' n body -&gt; eval0 (Map.insert n val2 env') body
+eval0 env (Variable n) = fromJust (Map.lookup n env)
+
+
+type Eval1 a = Identity a
+runEval1 :: Eval1 a -&gt; a
+runEval1 ev = runIdentity ev
+
+eval1 :: Env -&gt; Expr -&gt; Eval1 Value
+eval1 env (Literal i) = return $ IntVal i
+eval1 env (Abs n e) = return $ FunVal env n e
+eval1 env (Plus e1 e2) = do IntVal i1 &lt;- eval1 env e1
+                            IntVal i2 &lt;- eval1 env e2
+                            return $ IntVal (i1+i2)
+eval1 env (App e1 e2) = do val1 &lt;- eval1 env e1
+                           val2 &lt;- eval1 env e2
+                           case val1 of
+                                FunVal env' n body -&gt;
+                                    eval1 (Map.insert n val2 env') body
+eval1 env (Variable n) = return $ fromJust $ Map.lookup n env
+</code></pre>
+
+  </body>
+</html>
