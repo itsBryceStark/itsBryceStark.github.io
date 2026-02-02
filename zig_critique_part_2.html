@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>A Critique of the Zig Programming Language&mdash;Part 2 | Bryce Stark</title>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=0.5">
+		<link rel="stylesheet" type="text/css" href="style.css">
+	</head>
+	<body>
+		<a class="logo" href="index.html"></a>
+		<p><a href="/">Bryce Stark's Blog</a></p>
+		<h1 class="title">A Critique of the Zig Programming Language&mdash;Part 2</h1>
+		<div class="date">2025-12-06</div>
+<p>This is part of a series of articles critiquing the Zig Programming Language, previous article <a href="/zig_critique_part_1.html">Part 1</a>.</p>
+
+<p>In the last article, the general syntax and type system was convered. For this article, there is a focus on some of the more complex aspects of the language.</p>
+
+<div class="sections">
+<div class="section-item"><a href="#comptime">comptime</a></div>
+<div class="section-item"><a href="#builtinfunctions">Built-in Functions</a></div>
+<div class="section-item"><a href="#memory">Memory</a></div>
+<div class="section-item"><a href="#readabilityvsscannability">Readability vs Scannability</a></div>
+<div class="section-item"><a href="#endofpart2">End of Part 2</a></div>
+</div>
+<h2 id="comptime"><a href="#comptime">comptime</a></h2>
+<p>We’ve finally reached the main event: <code>comptime</code>.</p>
+
+<p>Zig’s flagship feature is <code>comptime</code>, and much of the language and standard library revolve around it. In many respects, it’s impressive. In others, it’s a nightmare.</p>
+
+<p><code>comptime</code> feels powerful at first, it’s how you create <code>comptime</code>-known constants and implement generics. In Zig, the primary way to do generics is by returning a type from a function. This mostly works well, but things start to get strange. If you’re coming from an ML-family language like Haskell, treating “generic types” as functions at the type level makes intuitive sense. But Zig sacrifices many conveniences found in those languages it aims to replace.</p>
+
+<p>A prime example: everything in Zig is by default “anonymous”, for the lack of a better word. <code>struct</code>s and other types have no inherent name, unlike in C, C++, or most other systems-level languages.</p>
+
+<pre><code class="language-c">// C code
+struct Foo { // Named struct
+    int x;
+};
+
+struct Foo x = {123}; // using a named struct
+
+
+typedef struct Foo Bar; // aliasing/typedefing `struct Foo` to be called `Bar`
+Bar y = {123};
+
+typedef struct { // aliasing/typedefing an anonymous struct to be called `Baz`
+    int x;
+} Baz;
+
+Baz z = {123};
+</code></pre>
+
+<p>Zig on the other hand has to infer what the name of the type is from context as it is not encoded that information into the type itself. One of the big consequences of this is that Zig really wants you to do structural/duck typing everywhere rather than nominal typing. Structural typing can have a lot of benefits when used in conjunction with things like type-classes and <code>trait</code>s, but Zig’s entire philosophy is effectively taking <a href="https://en.wikipedia.org/wiki/Duck_typing">duck typing</a> to the max. Coupled with type checking happening only if you use the code, the entire type system of Zig is way too weak.</p>
+
+<p>Because of the lack of this nominal typing, built-in functions make up for the these issues. <code>@This</code> is a good example of such a case where trying to reference the type itself requires using a “trick” because no name exists to begin with:</p>
+
+<pre><code class="language-zig">fn List(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        items: []T,
+
+        fn length(self: Self) usize {
+            return self.items.len;
+        }
+    };
+}
+</code></pre>
+
+<h3 id="badautomaticserializationtooling"><a href="#badautomaticserializationtooling">Bad Automatic Serialization Tooling</a></h3>
+<p>One of the <code>comptime</code>‘s primary uses is compile-time reflection, especially since Zig lacks runtime reflection. Try however to implement a correct JSON serializer using <code>anytype</code>, and it’s likely to fall short. Numerous hidden constraints arise:</p>
+
+<ul>
+<li>Should pointers be serialized?</li>
+<li>How do you preserve specific field names in structs?</li>
+</ul>
+
+<p>Zig has no attribute nor annotation system, so your options are limited:</p>
+
+<ul>
+<li>Use a custom nested <code>struct</code> to hold metadata, or</li>
+<li>Rely on the <code>@&quot;&quot;</code> syntax to manually name fields exactly as needed for serialization, and even encode metadata in that name?</li>
+</ul>
+
+<p>And once again: how is the serializer supposed to know whether a <code>[]const u8</code> represents a string or an array of integers without additional metadata? You can’t just make it work intuitively. Compared to most languages with reflection (compile-time or runtime), Zig’s approach is significantly more cumbersome.</p>
+
+<p>Zig’s type system isn’t powerful enough to make comptime reflection truly practical in these cases. It desperately needs:</p>
+
+<ul>
+<li>A dedicated string type (e.g. <code>[]const c8</code>, sorry I keep going on about it ad nauseam), and</li>
+<li>A simple, consistent way to annotate fields.</li>
+</ul>
+
+<p>In general, most of my use of <code>comptime</code> was for making up for a lack of features which should just be first class: <code>trait</code>s, struct field annotations, contracts, pre/post conditions, invariants, etc.</p>
+
+<h3 id="anytype"><a href="#anytype">anytype</a></h3>
+<p><code>anytype</code> often feels like a crude workaround in Zig, and its use tends to propagate a cascade of subtle problems throughout the codebase.</p>
+
+<pre><code class="language-zig">fn theMathFunction(x: anytype) @TypeOf(x) {
+    // do the math thing
+}
+</code></pre>
+
+<p>From the function signature alone, I have no idea what the function requires as an input. This seems completely contradictory to the <code>zig zen</code> mantra of “Communicate intent precisely”. In fact most of the design of Zig’s <code>comptime</code> goes against this ideal which I agree with.</p>
+
+<p>Requiring the user to read the code of a function is not a good nor precise way to communicate intent. And requiring the user to read the documentation because the function signature is completely opaque is a fundamentally flawed design.</p>
+
+<p>The standard library violates this ideal all the time. <a href="https://ziglang.org/documentation/master/std/#std.fs.Dir.iterate"><code>std.fs.Dir.iterate</code></a> is a great example of this. No documentation, not even a comment, and the internals are just opaque.</p>
+
+<pre><code class="language-zig">pub fn iterate(self: Dir) Iterator {
+    return self.iterateImpl(true);
+}
+</code></pre>
+
+<p>What even does this mean? And when you go to the definition of <a href="https://ziglang.org/documentation/master/std/#std.fs.Dir.Iterator"><code>Iterator</code></a>, you end up with another page lacking documentation, just showing the entire source code.</p>
+
+<p>Returning to the <code>anytype</code> example: in a language with traits (like Rust), it’s far more effective to declare type contracts directly in the function signature. This provides clarity, safety, and enforceability: something <code>anytype</code> fails to achieve.</p>
+
+<pre><code class="language-rust">fn theMathFunction&lt;T&gt;(input: T) where T: Add + Mul {
+    // do the math thing
+}
+</code></pre>
+
+<p>This approach is infinitely superior because you know exactly what operations are allowed on the type from the signature alone. With a well-defined contract, external tooling can easily discover functions that satisfy specific requirements. These contracts belong in the public API, not buried as <code>comptime</code> assertions inside function bodies. Type-classes/traits give you compile-time control over code you haven’t even executed or tested, a level of safety and expressiveness Zig simply cannot match. And once again, due to Zig’s late/lax type checking, you’re forced to write comprehensive <code>test</code>s just to validate code paths you may never run. This turns the compiler into a suggestion engine instead of a guarantee enforcer.</p>
+
+<p>To clarify: when I refer to traits, I mean pure behavioral contracts, not vtables nor runtime polymorphism, but compile-time guarantees about what operations a type supports.</p>
+
+<p>If we take <code>ArrayList(T)</code> for example, as Zig doesn’t really have decent abstractions, you <strong>have to</strong> know how the thing is implemented in order to be able to get anything useful out of it like functions or properties. When you look at the documentation of <a href="https://ziglang.org/documentation/master/std/#std.array_list.Aligned">ArrayList</a>, it shows nothing about how to get the <code>len</code> and you just have to know that you access it with <code>array.items.len</code>, and that’s also how you iterate across it in a for loop: <code>for (array.items) |item| {...}</code>.</p>
+
+<p>Because there is no way to express properties, traits, operator overloading, or type-classes in general, there is no way to make <code>ArrayList</code> act like what you would expect. You just have to know how it works and use that.</p>
+
+<h2 id="builtinfunctions"><a href="#builtinfunctions">Built-in Functions</a></h2>
+<p>Zig has a lot of built-in functions, all prefixed with <code>@</code> making it clear that these are compiler-level magic. They do follow a convention where <code>@camelCase</code> acts like a normal function whilst <code>@PascalCase</code> will return a <code>type</code>. The ones which are C specific (such as dealing with <code>@cImport</code> related stuff) are prefixed with <code>@c</code>.</p>
+
+<p>I’ll focus on some of the more weird built-in functions since this is an article mostly critiquing Zig. The <code>@cImport</code> related functions will be their own section.</p>
+
+<h3 id="@call"><a href="#@call">@call</a></h3>
+<p>This entire built-in function appears to exist just because Zig has no attribute/decorator system. The first parameter to the built-in function is how the call is to be “modified”:</p>
+
+<p>There is nothing wrong with any of this, but I ask again, why does Zig not have an attribute system? Currently I would be doing <code>@(call(.never_tail, foo, .{...})</code> when <code>#[callModifier=.never_tail] foo(...)</code> would be a lot better more obvious. It would even be possible to apply that attribute the function’s declaration directly too, instead of having to apply it at each call site.</p>
+
+<h3 id="@extern"><a href="#@extern">@extern</a></h3>
+<p>These are another set of functions which is effectively just trying to get around the lack of an attribute system. Why does Zig not have such a thing? Every other language does, why not Zig?</p>
+
+<h3 id="@setevalbranchquota"><a href="#@setevalbranchquota">@setEvalBranchQuota</a></h3>
+<p>This function seems to show a problem with Zig’s <code>comptime</code> system more than anything else. It is understandable to add restrictions to the <code>comptime</code> system as to not blow-up the compiler, but to an outside observer this makes it look like <code>comptime</code> is implemented poorly, compared to say Jai’s <code>#run</code>.</p>
+
+<h3 id="@splat"><a href="#@splat">@splat</a></h3>
+<p>The entire existence of this built-in function is a sign that Zig thinks verbosity is clarity.</p>
+
+<h2 id="memory"><a href="#memory">Memory</a></h2>
+<h3 id="allocators"><a href="#allocators">Allocators</a></h3>
+<p>Zig is language that performs no memory management on behalf of the programmer. This is main reason I was attracted to Zig in the first place. Zig, like many of the new languages out there (C3, Jai, Odin), all have custom allocator support as part of the language. I am not particularly sure if I like the design of the Zig <code>std.Allocator</code> interface, which is a vtable containing 4 different functions: <code>alloc</code>, <code>resize</code>, <code>remap</code>, and <code>free</code>. Of those, <code>resize</code> and <code>remap</code> seem very similar to me, with the only difference being <code>resize</code> is in-place and <code>remap</code> allows for relocation. A little confusing coming from C where <code>realloc</code> merges “resize” and “remap” operations. It also seems a little restrictive because a lot of custom allocators I have used, like Regions/Arenas, don’t really have a resize/remap operation to begin with (nor even <code>free</code>).</p>
+
+<p>In Zig they want to be as explicit as possible and allocators are no different. When performing any form of memory allocation, Zig’s convention is to make the programmer pass around allocators explicitly, and this does make it clear when something has a possibility of allocating memory. It sounds like a great idea in theory but I noticed when I was writing code a lot, I was sticking to a single set of allocators and not passing them around individually, but keeping them in a <code>struct</code> to minimize typing. This kind of explicitness didn’t seem to help me. I also noticed that some of the third party modules I used did not allow you to change what allocators they used either, which confused me. I thought part of the point of the custom allocators was so that I could control how things are allocated and override them?</p>
+
+<h3 id="lifetimeandownership"><a href="#lifetimeandownership">Lifetime and Ownership</a></h3>
+<p>Zig does not have any form of lifetime nor ownership system as part of its type system. It is a little unfortunate coming from languages like Rust, but I think I understand it because of the <code>std.Allocator</code> system. Because Zig is not trying to solve that problem, I understand why it does not have anything like it.</p>
+
+<h2 id="readabilityvsscannability"><a href="#readabilityvsscannability">Readability vs Scannability</a></h2>
+<p>Many people have described Zig as a <em>readable</em> language, but I have never felt this way. To me, Zig’s syntax is very dense and hard to read at a glance. After thinking about it, I believe the disagreement comes down to two different interpretations of the world <em>readable</em>: scannability and readability.</p>
+
+<p>Zig is not an easy language to <em>scan</em>. By scannability, I mean how easily a reader can quickly locate specific information within the code/text, often by looking for obvious keywords or patterns. Readability, on the other hand, is more of a measure of how easily a reader can understand the content with a detailed inspection.</p>
+
+<p>I rarely read code token-by-token from the start. Most of the time I first <em>scan</em> a codebase to get the overall shape and locate the parts I care about, then have a deep detailed read only where necessary. Because Zig lacks many of the strong visual cues and landmarks that other languages possess, especially those that I would typically rely on for that initial <em>scan</em>, I often find it slow and tiring to navigate Zig code.</p>
+
+<p>Zig’s soup of sigils and unusual operators actively hurts scannability. The constant sprinkling of <code>@</code> (especially for built-in functions and type casts), the overload of symbolic operators like <code>+%</code>, <code>-%</code>, <code>|=</code> , <code>catch</code>, <code>orelse</code>, etc., and the very compact control-flow syntax all combine to create a visually noisy “soup” of punctuation.</p>
+
+<p>When scanning/skimming, my eyes have almost no reliable landmarks to latch onto: function calls, type conversions, error handling, and regular arithmetic all look disturbingly similar at a glance. This makes it much harder to quickly answer certain questions because of all of this noise.</p>
+
+<p>I genuinely don’t understand how people defend this from an aesthetic or practical standpoint unless their mental model of “reading code” is exclusively the slow, line-by-line, token-by-token style. For anyone who relies on fast visual scanning (which is most working programmers most of the time), Zig’s syntax feels like a significant step backward for day-to-day programming.</p>
+
+<h2 id="endofpart2"><a href="#endofpart2">End of Part 2</a></h2>
+<p>Thank you for reading this part. For <a href="/zig_critique_part_3.html">Part 3</a>, I will be discussing the build system along with other things.</p>
+
+  </body>
+</html>

@@ -1,0 +1,1507 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>A Critique of the Zig Programming Language&mdash;Part 1 | Bryce Stark</title>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=0.5">
+		<link rel="stylesheet" type="text/css" href="style.css">
+	</head>
+	<body>
+		<a class="logo" href="index.html"></a>
+		<p><a href="/">Bryce Stark's Blog</a></p>
+		<h1 class="title">A Critique of the Zig Programming Language&mdash;Part 1</h1>
+		<div class="date">2025-11-23</div>
+<p>A lot of this critique will be following the order of the <a href="https://ziglang.org/">Zig</a> Language Reference: <a href="https://ziglang.org/documentation/master/">https://ziglang.org/documentation/master/</a>. But the order of the review/critique will not be “linear” since many concepts are interspersed throughout.</p>
+
+<p>This is a multiple part article series; this will take some time to explain.</p>
+
+<p>TL;DR: I’ve used Zig for years hoping it’d be a solid C/C++ alternative with manual-memory management, but after discovering <a href="https://c3-lang.org/">C3</a>, <a href="https://odin-lang.org/">Odin</a>, and Jai (Jonathan Blow’s language), I find Zig unpleasant, riddled with oddities, inconsistencies, and outright <a href="https://www.destroyallsoftware.com/talks/wat">“wat”</a> design choices. It is a poorly designed language and I can’t recommend it to anyone.</p>
+
+<p>This article assumes basic Zig knowledge and doesn’t teach the language. Most code examples are pulled straight from the official Zig Language Reference.</p>
+
+<div class="sections">
+<div class="section-item"><a href="#introduction">Introduction</a></div>
+<div class="section-item"><a href="#zigstandardlibrary">Zig Standard Library</a></div>
+<div class="section-item"><a href="#helloworld">Hello World</a></div>
+<div class="section-item"><a href="#comments">Comments</a></div>
+<div class="section-item"><a href="#values">Values</a></div>
+<div class="section-item"><a href="#zigtest">Zig Test</a></div>
+<div class="section-item"><a href="#variables">Variables</a></div>
+<div class="section-item"><a href="#integers">Integers</a></div>
+<div class="section-item"><a href="#floats">Floats</a></div>
+<div class="section-item"><a href="#operators">Operators</a></div>
+<div class="section-item"><a href="#vectortype">Vector Type</a></div>
+<div class="section-item"><a href="#pointertypes">Pointer Types</a></div>
+<div class="section-item"><a href="#slices">Slices</a></div>
+<div class="section-item"><a href="#struct">struct</a></div>
+<div class="section-item"><a href="#opaque">opaque</a></div>
+<div class="section-item"><a href="#errors">Errors</a></div>
+<div class="section-item"><a href="#optionals">Optionals</a></div>
+<div class="section-item"><a href="#zerobittypes">Zero Bit Types</a></div>
+<div class="section-item"><a href="#blocks">Blocks</a></div>
+<div class="section-item"><a href="#switch">switch</a></div>
+<div class="section-item"><a href="#while">while</a></div>
+<div class="section-item"><a href="#for">for</a></div>
+<div class="section-item"><a href="#if">if</a></div>
+<div class="section-item"><a href="#defer">defer</a></div>
+<div class="section-item"><a href="#noreturn">noreturn</a></div>
+<div class="section-item"><a href="#functions">Functions</a></div>
+<div class="section-item"><a href="#casting">Casting</a></div>
+<div class="section-item"><a href="#atomics">Atomics</a></div>
+<div class="section-item"><a href="#endofpart1">End of Part 1</a></div>
+</div>
+<h2 id="introduction"><a href="#introduction">Introduction</a></h2>
+<p>The Zig Language Reference intro is mostly marketing fluff. Words like “Robust”, “Optimal”, “Reusable”, and “Maintainable” are vague, subjective, and compare to nothing concrete.</p>
+
+<p>I’ll skip this section entirely.</p>
+
+<h2 id="zigstandardlibrary"><a href="#zigstandardlibrary">Zig Standard Library</a></h2>
+<p>Zig’s standard library is more comprehensive than C’s. <code>zig std</code> conveniently serves a local web server for the documentation. That said, most of the <code>std</code> is undocumented or barely commented: no explanations, no usage guidance, and almost zero examples. I’ll critique its design later, but the lack of docs is already a major flaw.</p>
+
+<h2 id="helloworld"><a href="#helloworld">Hello World</a></h2>
+<p>Let’s start with the “Hello World” example in Zig and its design:</p>
+
+<pre><code class="language-zig">const std = @import(&quot;std&quot;);
+
+pub fn main() !void {
+    try std.fs.File.stdout().writeAll(&quot;Hello, World!\n&quot;);
+}
+</code></pre>
+
+<p>There is a lot going on in this basic example, and verbosity aside, it demonstrates getting the <code>stdout</code> file and then writing a string literal to it. As far as examples go, that’s fine, but it already illustrates quite a few notable things about this language:</p>
+
+<ul>
+<li>Imports are an “expression” and use the built-in function <code>@</code> syntax</li>
+<li>Everything is “private” by default and <code>pub</code>lic declarations are opt-in</li>
+<li>Semicolons are required</li>
+<li>Curly braces are used for blocks</li>
+<li>No unification between <code>const</code> declarations and <code>fn</code> declarations
+<ul>
+<li>This isn’t an issue most of the time, but its drawbacks will become apparent later on with things like callbacks</li>
+</ul>
+</li>
+<li>Declarations are name followed by a type (opposite to languages like C or Java)</li>
+<li><code>!</code> error union types and <code>try</code>
+<ul>
+<li>These will be explained later on</li>
+</ul>
+</li>
+<li>The language has nested namespaces</li>
+<li>The language has methods</li>
+<li>Entry point is called <code>main</code> (following the C tradition)</li>
+<li>Entry point returns <code>void</code> or <code>!void</code> (allowing for <code>error</code> values)</li>
+<li>The source is encoded with UTF-8
+<ul>
+<li>This is a great thing, but some valid and useful characters are disallowed, and that causes problems. This will be discussed later.</li>
+</ul>
+</li>
+</ul>
+
+<p>Most of these aspects are neither good nor bad things about the language, rather they are the “flavor”.</p>
+
+<p>A more common <code>&quot;Hello World&quot;</code> example uses some form of formatted printing (e.g. <code>printf</code> in C), and this is how that is done in Zig:</p>
+
+<pre><code class="language-zig">const std = @import(&quot;std&quot;);
+
+pub fn main() void {
+    std.debug.print(&quot;Hello, {s}!\n&quot;, .{&quot;World&quot;});
+}
+</code></pre>
+
+<p>This snippet brings us to a number of Zig’s idiosyncrasies, unfamiliar from other languages.</p>
+
+<h3 id="namespacenestingplaceand"><a href="#namespacenestingplaceand">Namespace Nesting, Place, and </a></h3>
+<p><code>print</code> lives under the <code>debug</code> namespace and writes to <code>stderr</code>. This feels restrictive and unusual as the default, even if much printing is for debugging; especially since formatted prints exist elsewhere but the go-to option is oddly tucked away and <code>stderr</code>-bound.</p>
+
+<h3 id="lackofstringtype"><a href="#lackofstringtype">Lack of String Type</a></h3>
+<p>Zig forces format verbs like <code>{s}</code> for strings because it lacks both a dedicated string type or a character type, making it unique among systems-level programming languages. In C, the “character” type distinguishes between an byte-sized integer and something used for a string: e.g. <code>char</code> is a character, and <code>unsigned char</code> and <code>signed char</code> are integers. As Zig has neither a dedicated string type nor a character type, string literals are just <code>*[N:0]const u8</code>/<code>[]const u8</code>, making them indistinguishable at <code>comptime</code> from arrays of integers.</p>
+
+<p>I understand that a string can be represented as an array of integers with a specific character encoding scheme, but the representation of something is not the thing itself. Zig source is already UTF-8, so why is there not a dedicated character type to form a proper string like <code>[]const char</code> (or <code>[]const c8</code>, with <code>c16</code>/<code>c32</code> for UTF-16/32)? Forcing everything to be raw <code>[]const u8</code> throws away useful type-level distinctions for no good reason.</p>
+
+<p>The Zig designers appear to conflate a string’s in-memory representation with the actual string concept itself—an array of integers under an assumed encoding is merely how you might store one, not what a string is.</p>
+
+<p>Having no real string type in Zig is genuinely painful, as strings are everywhere in code and especially serialization, yet you’re stuck juggling raw byte slices with zero abstraction. The entire standard library is not equipped for strings nor Unicode, and that makes Unicode safety the programmer’s responsibility, increasing complexity in that problem domain and thus resulting in more errors and bugs.</p>
+
+<p>Also when comparing “strings”, because they are still slices, you must use the <code>std.mem.eql(u8, a, b)</code> function. All languages with a length-bound string type (i.e. not C) allow <code>==</code> and <code>!=</code> on strings (and sometimes <code>&lt;</code> etc.). This means that you cannot use “strings” in <code>switch</code> statements either. It means that other than the bounds checking because they are slices, “strings” in Zig are no better than handling strings in C. I thought Zig was meant to be an improvement on C? It feels like moving two steps forward and then two steps backward.</p>
+
+<p><code>std.mem.eql(u8, a, b)</code> forces you to explicitly write <code>u8</code> even though it’s obvious from the arguments. Using <code>anytype</code> removes the noise but makes the code much harder to read. Zig choosing painful verbosity again: explicitness for explicitness’ sake.</p>
+
+<h3 id="comptime"><a href="#comptime">comptime</a></h3>
+<p>Format strings must be a <code>comptime</code>-known literals. This is not inherently bad as it enables <code>comptime</code> type errors for mismatched verbs, and is required anyway since Zig only has <code>comptime</code> type information.</p>
+
+<p>Requiring <code>comptime</code> format strings is not a flaw in isolation, but it turns every print call into a unique instantiation. Having a very common function be <code>comptime</code> means it <strong>will</strong> lead to combinatorial explosion in both compile times and the resulting bloated binary size. This reliance on template-like calls has been a massive issue in numerous languages (such as C++ and Rust). The main justification is that each monomorphized print generates only the code it actually uses, allowing per-call optimizations. That’s a weak defense against the inevitable bloat.</p>
+
+<p>Why doesn’t Zig follow Rust’s lead and bake formatting into the compiler itself? That would let it share code, avoid massive monomorphization of every print call, and dodge the compile-time/binary-bloat nightmare without losing type safety.</p>
+
+<h3 id="novariadicparametersandtuplesyntax"><a href="#novariadicparametersandtuplesyntax">No Variadic Parameters and Tuple Syntax</a></h3>
+<p>Zig lacks real variadic functions, faking them with <code>anytype</code> and <code>comptime</code> params, with Zig’s tuple syntax <code>.{}</code>. Why reject proper typed variadics that every modern language has, just because you can hack an imitation?</p>
+
+<p>Credit where due: Zig wisely merges structs types and tuples types. No Rust-style split, rather “tuples” are just a syntactic thing. It’s nice not having to decide between using a struct type or a tuple type and just having the anonymous struct literal syntax <code>.{}</code>. Clean and painless.</p>
+
+<p>Zig technically supports C-style <code>...</code> variadics parameters along with the <code>@cVa*</code> built-ins, but nobody uses them outside of C interop.</p>
+
+<h3 id="tabsarebanned"><a href="#tabsarebanned">Tabs are Banned</a></h3>
+<p>This might sound like a minor point but it is an extremely annoying one: tabs are banned from Zig code. Banning tabs outright is petty and infuriating. Just issue a togglable warning, then let <code>zig fmt</code> enforce spaces, and move on. Forcing one side in the eternal tabs-vs-spaces holy war is not only pointless, it is likely to alienate those with a strong preference for tabs. Furthermore, it excludes Zig from consideration in companies where tabs are part of the house style.</p>
+
+<h2 id="comments"><a href="#comments">Comments</a></h2>
+<p>Zig only supports single-line comments, but has three types of single line comments:</p>
+
+<ul>
+<li><code>//</code> - normal comments</li>
+<li><code>///</code> - documentation style comments</li>
+<li><code>//!</code> - top-level documentation comments</li>
+</ul>
+
+<p>It is annoying for me at times that Zig doesn’t support <code>/**/</code>-like comments, and my main two reasons are:</p>
+
+<ul>
+<li>(1) It is useful to comment out sections of code. I know you can make your text editor block out sections with <code>//</code> but sometimes I don’t have that capability in my text editor (e.g. unconfigured vim in the terminal)</li>
+<li>(2) I sometimes want to have inline comments to denote something as part of the expression: <code>foo(/* this is a temporary parameter*/ x, y, z)</code> and in Zig I am forced to to split the code on to multiple lines.</li>
+</ul>
+
+<p>Having <code>//</code> vs <code>///</code> for normal vs documentation comments is an odd and needless complexity. Why not simply treat any comment immediately preceding a declaration as its doc comment? If there is an actual <em>technical</em> reason I don’t know about, I’d love to know.</p>
+
+<p>Top-level <code>///</code> docs make sense once you realize every Zig namespace is a <code>struct</code>. A .zig file is just a <code>struct</code>, as seen throughout the <code>std</code> library (e.g., <a href="https://github.com/ziglang/zig/blob/master/lib/std/Thread.zig"><code>std.Thread</code></a>). They use a <code>PascalCase</code> filename convention to signal “use as a <code>struct</code>”. This convention also applies to the built-in functions (e.g. <code>@field</code> is a normal function but <code>@FieldType</code> returns a type). I will discuss the weird design choice of unifying structs and namespaces later.</p>
+
+<p>However there is a reason Zig doesn’t support multi-line comments: Zig doesn’t support any kind of multi-line token (comments nor string literals). The rationale behind this decision was to help numerous syntax highlighters which work on a line at a time using regular expressions. This makes some sense until you realize most of these syntax highlighting systems already have to deal with multi-line tokens from other languages, so why would this change make it better in general? Is it to accommodate crappy syntax highlighters written by people who don’t know how to write a lexer?</p>
+
+<h2 id="values"><a href="#values">Values</a></h2>
+<p>Zig is a very value and expression oriented language, giving it a “functional” feel. Coming from Haskell and Rust, this is very nice in theory but Zig lags behind, especially in readability. Regardless, Zig has 4 main kinds of declarations: <code>fn</code>, <code>const</code>, <code>var</code>, and <code>comptime var</code>. <code>var</code> makes sense: it’s for runtime variables. <code>const</code> is weird because it used both for <code>comptime</code> values and runtime constant variable declarations, so in many ways it is closer to a name binding mechanism than declaring a variable. It would be a lot nicer if Zig had the equivalent of a <code>let</code> declaration rather than merging that concept into <code>const</code>. I understand the reason for the merger is because of how function bodies can be evaluated with <code>comptime</code> and that <code>const</code> is a result of those rules. <code>comptime var</code> is also a weird one but it does make some sense if you understand how <code>comptime</code> works.</p>
+
+<h3 id="primitivetypes"><a href="#primitivetypes">Primitive Types</a></h3>
+<p>Zig has a wide array of native primitive types and ones for interfacing with C (prefixed with <code>c_</code>). It’s nice that Zig has support for 128-bit integer types. There are a few types which are quite odd (but not necessarily bad):</p>
+
+<ul>
+<li><code>f80</code>
+<ul>
+<li>Who the heck is needing this any more except for interfacing with really old C code? Why not use <code>c_longdouble</code> in those cases?</li>
+<li>Is this just for “completeness” or for targeting old x87 machines?</li>
+</ul>
+</li>
+<li><code>f128</code>
+<ul>
+<li>There isn’t a single machine that supports 128-bit floats that isn’t an FPGA. This means all uses of this type are always emulated in software.</li>
+<li>If you need a 128-bit float, you probably need something else instead of it.</li>
+<li>At this point, why not just use a big float?</li>
+</ul>
+</li>
+<li><code>anyopaque</code>
+<ul>
+<li>It is to be used where <code>void</code> in used in C for pointers (i.e. <code>void *</code>)</li>
+<li>The idea makes sense and does kind of remove the overloading of <code>void</code>, as <code>void</code> has a known size of 0 bytes, while <code>anyopaque</code> has an unknown, but non-zero, size. This is similar to how function types work in C.</li>
+</ul>
+</li>
+<li><code>noreturn</code>
+<ul>
+<li>This is useful to denote that a function never returns.</li>
+<li>Rust has the never type <code>!</code> which is equivalent to this.</li>
+<li>Some expressions in Zig are of this type  (e.g. <code>while (true) {}</code> and <code>break</code> are of type <code>noreturn</code>)</li>
+</ul>
+</li>
+<li><code>comptime_int</code> and <code>comptime_float</code>
+<ul>
+<li>These make some sense in Zig because of the <code>comptime</code> system and to get around the range of the specific integer types, but they also very weird, especially when there is no <code>comptime_bool</code> (I understand you are meant to treat it like <code>i1</code> type in this case) or <code>comptime_string</code> (again because Zig has no string type), and then you must use the normal types instead. These types seem more like a “hack” than anything elegant.</li>
+</ul>
+</li>
+</ul>
+
+<h4 id="arbitrarybitwidthintegers"><a href="#arbitrarybitwidthintegers">Arbitrary Bit-Width Integers</a></h4>
+<p>Zig supports arbitrary bit-width integers up to a width of <code>65535</code> bits (<code>2^16 - 1</code>). I see them as a solution to a problem that shouldn’t exist in the first place, and they have caused many typo-related bugs.</p>
+
+<p>For people not fully familiar with Zig, Zig lets you define types like <code>i7</code> which refers to a signed 7-bit integer. I often mistype <code>i32</code> as <code>i23</code> or <code>i64</code> as <code>i63</code>, the compiler accepts it, and implicit conversions to larger integers can then easily hide this bug. At a minimum, please make these types opt-in via an <code>import</code>, and not be global.</p>
+
+<p>I wish they required the explicit form <code>@Int(.signed, 7)</code> or, better, taking inspiration from the Pascal-style range types like <code>@Int(0..1023)</code> or <code>@Int(-25..25)</code>. Using bit-widths to mimic range enforcement is the wrong tool. Enforce actual ranges and behavior instead.</p>
+
+<p>The main reason for them seems to be <code>packed struct</code>s. My issue isn’t their use there, but their “virality”: embedding an <code>enum</code> in a <code>packed struct</code> forces the <code>enum</code> to use a bit-width integer, unlike in C where the type and width are separate. This spreads the use of bit-width integers, especially complicating FFI bindings when the same <code>enum</code> appears with different widths in different contexts. It ties the value semantics to storage width, when a wider power-of-2 type might be better in the regular code usage.</p>
+
+<h3 id="primitivevalues"><a href="#primitivevalues">Primitive Values</a></h3>
+<p>Zig has 3 main sets of built-in values:</p>
+
+<ul>
+<li><code>true</code> and <code>false</code> for <code>bool</code> values</li>
+<li><code>null</code> for setting an optional type to <code>null</code> or nullable-pointers to <code>null</code></li>
+<li><code>undefined</code> to leave a value uninitialized/unspecified</li>
+</ul>
+
+<p>From the code I have seen, <code>undefined</code> is overused, and not as a compiler optimization hint, but as a debug poison value. This is poor practice, but I blame the community, not the language.</p>
+
+<h3 id="stringliteralsandunicodecodepointliterals"><a href="#stringliteralsandunicodecodepointliterals">String Literals and Unicode Code Point Literals</a></h3>
+<p>As I have said before, Zig needs a string type based on a <code>c8</code>/<code>c16</code>/<code>c32</code> type. And because those would be character types, it means you get a representation of a code point (<code>c32</code>) for free.</p>
+
+<p>Now for a real oddity, due to Zig’s lack of multi-line tokens (as discussed previously), multi-line strings are achieved using the token <code>\\</code> on each line.</p>
+
+<pre><code class="language-zig">const hello_world_in_c =
+    \\#include &lt;stdio.h&gt;
+    \\
+    \\int main(int argc, char **argv) {
+    \\    printf(&quot;hello world\n&quot;);
+    \\    return 0;
+    \\}
+;
+</code></pre>
+
+<p>I’d rather it used something like Python’s <code>&quot;&quot;&quot;</code> syntax (which would be a multi-line token) and/or just tell people to use <code>@embedFile</code> when they want full control. I understand the <code>\\</code> approach is to mimic a <code>//</code> comment but it is just so odd to me and even after using Zig for many years, I still cannot get used to it both aesthetically and practically.</p>
+
+<h3 id="destructuring"><a href="#destructuring">Destructuring</a></h3>
+<p>Zig has a weird edge case feature which I’ve not really seen in IRL code and that is the destructuring syntax.</p>
+
+<pre><code class="language-zig">x, y, z = tuple;
+x, y, z = array;
+x, y, z = vector;
+</code></pre>
+
+<p>It seems useful sometimes but I have very rarely come across a need for it. It seems like it is trying to mimic multiple return values which other languages like Lua or Go have but in a bit of a weird way. And it doesn’t feel like tuple destructuring from other functional languages. The real oddity is when you mix this syntax with declaring variables as seen with this official example from the documentation:</p>
+
+<pre><code class="language-zig">const print = @import(&quot;std&quot;).debug.print;
+
+pub fn main() void {
+    var x: u32 = undefined;
+
+    const tuple = .{ 1, 2, 3 };
+
+    x, var y : u32, const z = tuple;
+
+    print(&quot;x = {}, y = {}, z = {}\n&quot;, .{x, y, z});
+
+    // y is mutable
+    y = 100;
+
+    // You can use _ to throw away unwanted values.
+    _, x, _ = tuple;
+
+    print(&quot;x = {}&quot;, .{x});
+}
+</code></pre>
+
+<p>It’s not a bad feature, but I just haven’t seen many people use it yet.</p>
+
+<h2 id="zigtest"><a href="#zigtest">Zig Test</a></h2>
+<p>Zig allows you to write unit test trivially inline with your code. They are quite useful and work surprisingly well.</p>
+
+<pre><code class="language-zig">const std = @import(&quot;std&quot;);
+
+test &quot;expect addOne adds one to 41&quot; {
+
+    // The Standard Library contains useful functions to help create tests.
+    // `expect` is a function that verifies its argument is true.
+    // It will return an error if its argument is false to indicate a failure.
+    // `try` is used to return an error to the test runner to notify it that the test failed.
+    try std.testing.expect(addOne(41) == 42);
+}
+
+test addOne {
+    // A test name can also be written using an identifier.
+    // This is a doctest, and serves as documentation for `addOne`.
+    try std.testing.expect(addOne(41) == 42);
+}
+
+/// The function `addOne` adds one to the number given as its argument.
+fn addOne(number: i32) i32 {
+    return number + 1;
+}
+</code></pre>
+
+<p>The default Zig test runner is quite nice in how it handles tests but adding a custom one is a bit inconvenient at times.</p>
+
+<p>Also this is more of a convention thing but I do wish more of the <code>test</code> stuff was in separate files to the code itself, but again that’s not really the language’s fault.</p>
+
+<p>However there is one aspect about <code>test</code> which is not its fault but the fault of the rest of the language: it is a common convention to use <code>test</code> as a means to type check code which not used in the rest of code. Zig has this weird “late” typing in which it only type checks the code it uses. I will discuss this later one in a different section, but I hate this behavior of Zig a lot.</p>
+
+<h2 id="variables"><a href="#variables">Variables</a></h2>
+<p>As discussed previously, you can declare variables with either <code>var</code> (mutable) or <code>const</code> (immutable), but <code>const</code> is overloaded in its meaning for both <code>comptime</code>-level declarations and runtime-level declarations, and I would prefer there was also the equivalent of <code>let</code> (immutable runtime declaration).</p>
+
+<p>Annoyingly, the <code>const</code> type attribute is not “orthogonal”. You can use it only for pointer or array types. For example: <code>var x: const i32 = 1234;</code> is not allowed, unlike in C.</p>
+
+<p>Variables in Zig, unlike C, also must be explicitly initialized. This does “solve” the C problem where if you declare a variable without initializing it, the value is undefined/uninitialized. With Zig, it is opt-in behavior to make it <code>undefined</code>.</p>
+
+<pre><code class="language-zig">var x: i32 = undefined;
+</code></pre>
+
+<p>Unfortunately, I’ve seen Zig users overuse <code>undefined</code>; especially incorrectly. I suspect some people misunderstand its meaning.</p>
+
+<h3 id="unuseddeclarations"><a href="#unuseddeclarations">Unused Declarations</a></h3>
+<p>One thing that really really annoys me is the inability to ignore unused declarations. I hate Zig’s refusal to ignore unused declarations. Fine for dead-code linting, but it blocks quick test/debug code. Stop copying Go’s bad idea.</p>
+
+<h3 id="@"""><a href="#@""">@""</a></h3>
+<p>Zig has this weird syntax for identifiers which need a specific name, usually when using <code>extern</code>al FFI code.</p>
+
+<pre><code class="language-zig">const @&quot;identifier with spaces in it&quot; = 0xff;
+const @&quot;1SmallStep4Man&quot; = 112358;
+
+const c = @import(&quot;std&quot;).c;
+pub extern &quot;c&quot; fn @&quot;error&quot;() void;
+pub extern &quot;c&quot; fn @&quot;fstat$INODE64&quot;(fd: c.fd_t, buf: *c.Stat) c_int;
+
+const Color = enum {
+    red,
+    @&quot;really red&quot;,
+};
+const color: Color = .@&quot;really red&quot;;
+</code></pre>
+
+<p>Zig oddly lacks an attribute/decorator system for declarations, where you can specify the linkage information separately from the name of the variable names. Why not allow something like this?</p>
+
+<pre><code class="language-zig">// Pseudo-Zig Code
+
+#[linkerName=&quot;fstat$INODE64&quot;]
+pub extern &quot;c&quot; fn fstat(fd: c.fd_t, buf: *c.State) c_int;
+
+// or, but maybe not?
+
+#[externalSharedLibrary=&quot;c&quot;]
+#[linkerName=&quot;fstat$INODE64&quot;]
+pub fn fstat(fd: c.fd_t, buf: *c.State) callconv(.c) c_int;
+</code></pre>
+
+<p>Why does Zig not have any mechanism for this in the language? Most languages have some sort of attribute system because it allows them to extend/fix the language without the need for new syntax. Is it somehow related to the “no multi-line token” rule?</p>
+
+<h3 id="staticlocalvariables"><a href="#staticlocalvariables">Static Local Variables</a></h3>
+<p>Relating to the lack of attribute syntax, Zig has a perplexing syntax for declaring “static local” variables.</p>
+
+<pre><code class="language-zig">fn foo() i32 {
+    const S = struct {
+        var x: i32 = 1234;
+    };
+    S.x += 1;
+    return S.x;
+}
+</code></pre>
+
+<p>How this works is that it defines a new <code>struct</code> type <code>S</code> and defines a static variable <code>var x</code> within it. And then you access this from the struct type <code>S</code> itself. What makes it even more perplexing is that Zig has a <code>threadlocal</code> keyword which can be applied to a <code>var</code>, <code>threadlocal var x: i32 = 1234;</code>, but this STILL needs to be defined within a <code>struct</code>.</p>
+
+<p>Why not just have attribute syntax so that you don’t have to wrap things in a <code>struct</code> (which is acting like a namespace) to get around a flaw in the language?</p>
+
+<pre><code class="language-zig">// Pseudo-Zig Code
+#[static]
+var x: i32 = 1234;
+
+#[threadlocal]
+var y: i32 = 5678;
+</code></pre>
+
+<p>This is pre-empting the awful syntax required to emulate lambda functions.</p>
+
+<h2 id="integers"><a href="#integers">Integers</a></h2>
+<p>Integers literals are pretty nice in Zig. They don’t require any suffixes like in C. They have explicit prefixes for different bases to decimal (binary <code>0b</code>, octal <code>0o</code>, hexadecimal <code>0x</code>), and they allow for <code>_</code> within them to act as a visual digit separator.`</p>
+
+<pre><code class="language-zig">const decimal_int = 98222;
+const hex_int = 0xff;
+const another_hex_int = 0xFF;
+const octal_int = 0o755;
+const binary_int = 0b11110000;
+
+// underscores may be placed between two digits as a visual separator
+const one_billion = 1_000_000_000;
+const binary_mask = 0b1_1111_1111;
+const permissions = 0o7_5_5;
+const big_address = 0xFF80_0000_0000_0000;
+</code></pre>
+
+<h2 id="floats"><a href="#floats">Floats</a></h2>
+<p>Zig supports 6 different float types: <code>f16</code>, <code>f32</code>, <code>f64</code>, <code>f80</code>, <code>f128</code>, and <code>c_longdouble</code>. As I previously mentioned, I don’t see the point of an explicit <code>f80</code> nor <code>f128</code> type, especially when <code>f128</code> is not supported on any platform natively and is always emulated in software, and <code>f80</code> was something that only existed in <code>x87</code> hardware and would be better expressed with <code>c_longdouble</code> when needed (I guess they are there for completeness).</p>
+
+<p>Zig’s float literal syntax is familiar to anyone come from C. It supports <code>123.0</code>, <code>123.0e+77</code>, and even the hex float <code>0x103.70p-5</code> syntax. And being consistent with integers, it also supports the underscore syntax as a digit separator.</p>
+
+<p>Zig opts for <code>Strict</code> mode when doing floating point operations by default. This can overridden either globally or on a per-block basis using <code>@setFloatMode(.optimized)</code>.</p>
+
+<p>This syntax is kind of weird to me because it is kind of acting like an attribute but not really. It’s using the built-in function syntax but doesn’t return a value and instead changes the behavior of a block. Why not use a separate attribute syntax for this?</p>
+
+<pre><code class="language-zig">// Current Syntax
+export fn foo_optimized(x: f64) f64 {
+    @setFloatMode(.optimized);
+    return x + big - big;
+}
+
+// Pseudo-Zig code
+export fn foo_optimized(x: f64) f64 {
+    #[setFloatMode=.optimized] {
+    	return x + big - big;
+    }
+}
+// or
+#[setFloatMode=.optimized]
+export fn foo_optimized(x: f64) f64 {
+    return x + big - big;
+}
+</code></pre>
+
+<p>It is great that you can change this behavior granularly, but the syntax is just odd to me.</p>
+
+<h2 id="operators"><a href="#operators">Operators</a></h2>
+<p>Most of Zig’s operators are similar enough to C’s, but luckily they have much better precedence rules than C. Most of the operators behave as you’d expect but some have really odd requirements and rules.</p>
+
+<h3 id="overflowbehavioroperators"><a href="#overflowbehavioroperators">Overflow Behavior Operators</a></h3>
+<p>Integers have different operators for supporting different kinds of arithmetic behavior. Operators such as <code>+</code> and <code>-</code> will cause “illegal behavior” on integer overflow. If you want things to wrap or saturate, different operators must be used. <code>+%</code> and <code>-%</code> are for wrapping arithmetic, and <code>+|</code> and <code>-|</code> are for saturating arithmetic.</p>
+
+<p>I’d prefer all integers wrapped by default (as all machines now have 2’s complement), as I’ve had issues with the C “Undefined Behavior” causing problems with signed integer overflow. What is a bit different is that Zig also makes unsigned integer overflow “illegal behavior” too. Zig having this behavior is fine with me, and it is just a minor personal gripe.</p>
+
+<p>For saturating arithmetic, I don’t believe most code ever needs it, and when it does, it makes more sense if it was a built-in function instead which could be called when needed. Especially since it is useful to know if it saturated or not, and not just saturate. Zig doesn’t really have an easy mechanism to check for this using the <code>+|</code> style operators.</p>
+
+<p>But a lot of Zig code does like to use the wrapping operators (e.g. <code>+%</code>) and it’s really hard to scan code which uses them. The operator salad of Zig is not nice when scanning code (as opposed to intensive reading each token). This is my general criticism of Zig’s syntax: it’s not easy to scan and requires very “careful” intensive reading to understand.</p>
+
+<h3 id="shiftoperators"><a href="#shiftoperators">Shift Operators</a></h3>
+<p>The bit shift operators <code>&lt;&lt;</code> and <code>&gt;&gt;</code> in Zig are a bit different to other languages. Like in C, they move all the bits (left or right) but the right-hand-side operand must either be <code>comptime</code>-known or have a type with log2 number of bits as the left-hand-side operand.</p>
+
+<pre><code class="language-zig">var x: u32 = ...;
+var y: u5  = ...;
+var z: u32 = x &lt;&lt; y;
+</code></pre>
+
+<p>This use of the bit-width types are unexpected. I’d expect like in other C-like languages that it would be the same type as the left-hand-side operand. However, I understand this makes sense because it then makes sure you cannot over/under shift because the range of the shifting operand is restricted by the type. The problem is that when you are casting from a larger integer type to the smaller log2 operand size, it just truncates the number and thus doesn’t actually make anything safer than before.</p>
+
+<p>Personally, I prefer the behavior that Go has with shifts. There are two main differences:</p>
+
+<ul>
+<li>The shifting operand can be ANY unsigned integer type</li>
+<li><code>a&lt;&lt;2</code> is equivalent to <code>(a&lt;&lt;1)&lt;&lt;1</code></li>
+</ul>
+
+<p>These two differences might sound minor but they make a big difference. The first one is a ergonomic change which means you don’t have to worry about getting the correct type, and second is a behavior change which complements the first.</p>
+
+<p>The second definition means that if the shifting operand over/under shifts, the resulting value of the thing is zeroed. This means that a shift is now closer to multiplying by a power of two. This means that <code>a&lt;&lt;b</code> is closer to doing <code>a *% pow(2, b)</code> from a mathematical perspective. I’d argue this is how most people conceptualize shifting as well.</p>
+
+<p>This approach to defining shifting operands does mean an extra conditional move is added when performing a shift, but this cost is most likely minimal in practice.</p>
+
+<h3 id="optionalrelatedoperators"><a href="#optionalrelatedoperators">Optional-Related Operators</a></h3>
+<p>Zig has an optional type <code>?T</code> which is useful when expressing if a value is specified or not. This is common in many functional programming languages, and because of Zig’s very expression-oriented approach to things, it is very nice to have. To complement this type, Zig has the following operator:</p>
+
+<ul>
+<li><code>null</code> checks (<code>a == null</code> and <code>a != null</code>)</li>
+<li><code>orelse</code> operator (<code>a orelse b</code>)</li>
+<li><code>a.?</code> optional unwrap
+<ul>
+<li>equivalent to <code>a orelse unreachable</code></li>
+</ul>
+</li>
+</ul>
+
+<h3 id="errortypeoperators"><a href="#errortypeoperators">Error Type Operators</a></h3>
+<p>Zig has an <code>error</code> type (which I haven’t discussed yet but I will get to), and a few useful operators associated with the the error union types.</p>
+
+<ul>
+<li><code>catch</code></li>
+<li><code>try</code></li>
+<li><code>errdefer</code></li>
+</ul>
+
+<p>I will discuss these later in the section on errors.</p>
+
+<h3 id="arrayoperators"><a href="#arrayoperators">Array operators</a></h3>
+<p>Zig’s <code>[_]T</code> syntax for specifying a fixed-length array with an inferred length is pretty nice as it makes a clear distinction between a fixed-length array and a slice:</p>
+
+<pre><code class="language-zig">[_]f32{ 0.0, 1.0, 0.0, 1.0, 0.0 }
+</code></pre>
+
+<p>However, Zig has some odd syntax for array concatenation and, at the current time of writing, array “multiplication” operations. The former is common in other languages where you can “add”/concatenate two arrays together, and typically this is done with just <code>+</code>. In Zig, they have a dedicated operator <code>++</code> for array concatenation.</p>
+
+<p>Like many modern languages, Zig does not have an <code>++</code> or <code>--</code> operator for incrementing and decrementing values, so it reuses <code>++</code> for a different purposes. Personally, I think a different operator should have been used and <code>++</code> reserved to catch common errors by people coming from C-like languages, but this is only a minor complaint and not really that much of a problem.</p>
+
+<p>The real oddity in Zig is the “array multiplication” operator: <code>a ** b</code>. I understand this will be removed and replaced with <code>@splat</code> but with its current existence, it honestly seems like it is solving a problem which should have been solved in a completely different way. The example given in the Zig documentation is the following:</p>
+
+<pre><code class="language-zig">const mem = @import(&quot;std&quot;).mem;
+const pattern = &quot;ab&quot; ** 3;
+mem.eql(u8, pattern, &quot;ababab&quot;)
+</code></pre>
+
+<p>But most of its use cases I’ve seen are nothing to do with string literals but rather creating arrays of a specific value (usually zero):</p>
+
+<pre><code class="language-zig">// initialize an array to one
+const all_one = [_]u16{1} ** 10;
+</code></pre>
+
+<p>Rust has the clearer <code>[1; N]</code> syntax since they know this is going to be more common, and it matches the array syntax <code>[u16; 10]</code>. However, GNU C and some other languages have approached this completely differently. In GNU C, you can achieve something like this in a much more generic way with ranged <a href="https://gcc.gnu.org/onlinedocs/gcc-4.1.2/gcc/Designated-Inits.html">designated initializers</a>:</p>
+
+<pre><code class="language-c">u16 all_one[] = {[0 ... 9] = 1};
+</code></pre>
+
+<p>Odin has a similar syntax too:</p>
+
+<pre><code class="language-odin">all_one := [?]u16{0..&lt;10 = 1}
+</code></pre>
+
+<p>This generalization is a lot clearer to read and is clearly more generally applicable. With Zig, you’d have to use both <code>++</code> and <code>**</code> to achieve what is possible in other languages.</p>
+
+<p>I should say that <code>**</code> is going to be removed in favor of <code>@splat</code>, but again this is still not a great solution to the problem.</p>
+
+<pre><code class="language-zig">const all_one: [10]u16 = @splat(1);
+</code></pre>
+
+<h3 id="spacesaroundoperators"><a href="#spacesaroundoperators">Spaces Around Operators</a></h3>
+<p>Similar to how Zig disallows unused variable declarations, Zig also enforces other code styling conventions at the language level. A very minor one but one that does cause me a little annoyance is the following:</p>
+
+<pre><code>binary operator `&gt;=` has whitespace on one side, but not the other.
+    if (a &gt;=b) {
+          ^~
+</code></pre>
+
+<p>I understand that is to prevent common errors where people use whitespace to group operators for readability, but why is this an error rather than a part of <code>zig fmt</code>? I, like most other programmers, just want to write code that works first and then make it pretty.</p>
+
+<h2 id="vectortype"><a href="#vectortype">Vector Type</a></h2>
+<p>Zig has a type for specifying SIMD vector types through <code>@Vector(N, T)</code>. They support most of the common operators you’d expect for SIMD operations. They seem to map directly to LLVM’s vector types which is nice.</p>
+
+<p>However when I use them, they are not that nice to use. A lot of the SIMD operations don’t seem to map to what I’d expect in many cases, especially when doing vector masks with integers and getting a vector of a boolean instead.</p>
+
+<p>The other thing I’ve seen people do, again not the language but the community, is using <code>@Vector</code> types to perform normal math/graphics/game related vector operations. Vector types use for games are usually better implemented WITHOUT the SIMD requirement (alignment, padding, etc.), as they have different purposes. Most other languages seem to either use operator overloading (like C3) or have array programming built-in for the array types (like Odin). Zig has neither and thus suffers from this, especially when doing anything graphically related like a game. I have to resort to doing method like operations on a custom <code>const Vec3 = struct {...};</code> type.</p>
+
+<p>The entire type seems like they wanted to describe SIMD, didn’t know how to do it, and so punted to lower to the LLVM vector directly without much thought as to how to generalize it correctly. Especially so from the perspective of using using a high-level language such as Zig, rather than a low-level language such as LLVM IR.</p>
+
+<p>Things like <code>@splat</code> are so verbose to use when they didn’t need to be. Zig allows for loads of implicit conversions everywhere, why not allow it for values to vectors too, rather than having to call <code>@splat</code>. The explicitness of <code>@splat</code> doesn’t improve reading, it in fact makes it worse.</p>
+
+<h2 id="pointertypes"><a href="#pointertypes">Pointer Types</a></h2>
+<p>Zig has quite a few different pointer types for different purposes.</p>
+
+<ul>
+<li><code>*T</code> (single-item, assumed to be never <code>null</code>)</li>
+<li><code>[*]T</code> (many-item)</li>
+<li><code>[*c]T</code>(C-like)</li>
+<li><code>*allowzero T</code> (nullable pointer (could be <code>null</code>), different to <code>?*T</code> as there is no explicit check)</li>
+<li><code>*volatile T</code> (volatile pointer)</li>
+<li><code>*align(N) T</code> (differently aligned pointer)</li>
+<li><code>[*:N]T</code> (sentinel terminated pointers)</li>
+<li><code>?*T</code> (optional pointer)</li>
+</ul>
+
+<p>This does add a lot of richness to the type system to express the different types of pointers that could possibly exist in the type system. I have no issues with the number of different types of pointers, but I do have issues with how they behave and interact with the rest of the type system. I understand a lot of people don’t like the plethora of pointer types, but it does clarify what is happening a lot.</p>
+
+<h3 id="singleitempointers"><a href="#singleitempointers">Single-Item Pointers </a></h3>
+<p>Single-item pointers assume they will point to exactly one item. This means that by default, everything is assumed to be not <code>null</code> and thus act similar to a reference in C++. This is quite nice in how they can make a good assumption when using pointers that they will point to something and not be possibly <code>null</code>.</p>
+
+<p>To dereference a pointer, <code>ptr.*</code> syntax is used.</p>
+
+<p>What I don’t like is that normal pointers also support slicing syntax <code>ptr[0..1]</code> and subtraction: <code>ptr - ptr</code>. Why would a pointer to a single-item need either of these operations? And why would you need subtraction for the normal pointer type? I can understand it for the c-like pointer type but that’s it.</p>
+
+<p>It is nice that there is no “reference” type in Zig, like in C++. Everything just being pointers is nice.</p>
+
+<h3 id="manyitempointers"><a href="#manyitempointers">Many-Item Pointers </a></h3>
+<p>Zig supports a many-item pointer to an unknown number of items. Within Zig code itself, it’s not really used that much except for doing certain optimizations. It doesn’t support <code>ptr.*</code> because it’s meant to act more like an array, and instead it supports index syntax <code>ptr[i]</code>. Like a other arrays, it supports slice syntax <code>ptr[start..end]</code> and <code>ptr[start..]</code>. Both of these syntaxes are great!</p>
+
+<p>Similar to the single-item pointers, I don’t understand why it supports both pointer-integer arithmetic (<code>ptr + int</code>, <code>ptr - int</code>) and pointer subtraction <code>ptr - ptr</code>. It makes sense for the C-like pointer type but not for this native one. Especially when pointer-integer arithmetic is supported with the slice syntax already <code>ptr[offset..]</code> and <code>ptr[-offset..]</code>.</p>
+
+<h3 id="clikepointers"><a href="#clikepointers">C-Like Pointers </a></h3>
+<p>Zig allows for interfacing with C and as such it has a pointer type for that specific use case (especially with the use of <code>@cImport</code>). It supports all of the syntax of both <code>*T</code> and <code>[*]T</code>, including the pointer arithmetic and pointer subtraction. It coerces to other pointer types, as well as optional pointers (e.g. <code>?*T</code>). It allows the pointer to be <code>null</code>, and a few other things.</p>
+
+<p>This type makes sense with the automatic binding generators and <code>@cImport</code>, since a lot of C code treats pointers very “fluid”. They can be both single-item, many-item, and nullable all at the same time depending on the context.</p>
+
+<h3 id="allowzero"><a href="#allowzero">allowzero</a></h3>
+<p>These are a special use type of pointer that are only ever needed on freestanding OS targets. I would have preferred to just use <code>[*c]T</code> in those cases.</p>
+
+<h3 id="volatile"><a href="#volatile">Volatile</a></h3>
+<p>Volatile operations are nice. Personally, I think they should have NO operators associated with them and you must access them built-in functions in order to a volatile load or a volatile store.</p>
+
+<h3 id="customalignmentpointers"><a href="#customalignmentpointers">Custom Alignment Pointers </a></h3>
+<p>These are a special use type of pointer, similar to <code>allowzero</code>, which I have yet to find a need for.</p>
+
+<h3 id="sentinelterminatedpointers"><a href="#sentinelterminatedpointers">Sentinel Terminated Pointers </a></h3>
+<p>I’ve pretty much only seen these pointer types be used to express C-like NUL terminated strings: <code>[*:0]const u8</code>. This sentinel approach does also apply to slices and arrays, but again I haven’t seen much of a use of these outside of C-like strings yet. So they do seem like a very edge-case type which would probably be better effectively aliased when used e.g. <code>const Cstring = [*:0]const u8;</code>.</p>
+
+<h2 id="slices"><a href="#slices">Slices</a></h2>
+<p>Zig has a slice type which is internally a pointer and a length. These are different to arrays as the length is not known at <code>comptime</code> but rather a runtime-known value. They are a great feature which I wish C had. They pretty much replace a lot of the need for pointer arithmetic and pointer-like operations that I would have done in C.</p>
+
+<p>The length of the slice can be accessed with the <code>len</code> field (e.g. <code>slice.len</code>). I do find it weird that the underlying pointer cannot be accessed in a similar way.</p>
+
+<p>I have very little to gripe about with slice types, but what I do want to show are the unconventional slicing rules that result in unexpected types.</p>
+
+<p>Let’s say we have a slice <code>var x: []T = ...;</code>, when slicing a slice (or any other type for that matter), depending on whether the inputs are <code>comptime</code>-known changes the resulting type. I understand why this behavior exists but it is very unexpected and unintuitive.</p>
+
+<p>For example:</p>
+
+<pre><code>var x: []T = ...;
+var i: i32 = 3;
+var j: i32 = 7;
+
+_ = x[i..];  // []T
+_ = x[2..];  // []T
+_ = x[i..j]; // []T
+_ = x[3..7]; // *[4]T, wait.. what?
+</code></pre>
+
+<p>The latter of the four examples is just very surprising to me. In every other case, the type has remained the same, but as soon as the arguments are <code>comptime</code>-known, the type changes completely.</p>
+
+<p>Zig often changes the semantics in general when things are <code>comptime</code>-known. This is not something I want from a language. I want the semantics to be pretty much the same regardless of whether some values are <code>comptime</code>-known or not. I’ll show another example later which has the exact same kind of problem with control flow.</p>
+
+<p>A minor gripe is the use of <code>..</code> for ranges. I much prefer what Odin and Nim do with their much clearer range syntax of <code>..&lt;</code> and <code>..=</code>, while Zig’s <code>..</code> is a little confusing because other languages define that differently as either inclusive or exclusive for the high value. In the case of Odin, it has a different syntax entirely for slicing which is closer to Python and Go, I am assuming because ranges (for compound literals and <code>case</code>s) are a different kind of operation than slicing, as well as making it more familiar to people coming from those languages.</p>
+
+<h2 id="struct"><a href="#struct">struct</a></h2>
+<p>Like all C and C++ alternatives, Zig also has a <code>struct</code> type. <code>struct</code>s in Zig also allow for methods to be defined within the declaration. What is a little “sad?” is that Zig’s methods are just mere methods. They just exist as a form of syntactic sugar of sorts rather than having any specific meaning to them. There is no <code>trait</code>/<code>interface</code> system, everything is very “duck-typey” by default. If people want more restrictions, they can write the <code>comptime</code> specific code to do those checks, which must then be done within the body of the function of the type. This is not necessarily a bad thing at all, it’s just a different way of doing things to other languages.</p>
+
+<p>In Zig, <code>struct</code>s also act as namespaces. This means you can nest other kinds of declarations, not just “methods”.</p>
+
+<pre><code class="language-zig">// Structs can have declarations.
+// Structs can have 0 fields.
+const Empty = struct {
+    pub const PI = 3.14;
+};
+</code></pre>
+
+<p>Now here’s the “amazing” thing in Zig: files are structs. Yes, a <code>.zig</code> file in Zig is actually a struct and this is sadly used throughout the Zig standard library (example: <a href="https://github.com/ziglang/zig/blob/master/lib/std/Thread.zig"><code>std.Thread</code></a>). I understand why this was done, but I really dislike this. I much prefer languages which make a very clear distinction between what a struct is (even if that can be used as a namespace) and what a module is. I know you <em>can</em> unify the concepts, but I don’t think that you should. C++ used to do this before it added <code>namespace</code> and it got really weird really quick.</p>
+
+<pre><code class="language-zig">const Vec3 = struct {
+    x: f32,
+    y: f32,
+    z: f32,
+
+    pub fn init(x: f32, y: f32, z: f32) Vec3 {
+        return Vec3{
+            .x = x,
+            .y = y,
+            .z = z,
+        };
+    }
+
+    pub fn dot(self: Vec3, other: Vec3) f32 {
+        return self.x * other.x + self.y * other.y + self.z * other.z;
+    }
+};
+</code></pre>
+
+<p>One weird syntactic aspect of structs (as well as files acting like structs) is how they mix fields and static declarations. Fields do not start with a keyword and are terminated by a <code>,</code>. Static declarations start with a keyword (with an optional <code>pub</code>) and then terminated with a <code>;</code>. At least container fields are not allowed to be interspersed with declarations, meaning that things can be still be relatively readable and scannable.</p>
+
+<p>Zig’s struct fields also allow for default field values. This is nice if that’s your kind of thing but they can also be annoying in subtle ways. They effectively add an implicit constructor to the language, and if you are coming from C (rather than C++), you might not want this.</p>
+
+<h3 id="structliterals"><a href="#structliterals">Struct Literals</a></h3>
+<p>I’d argue that struct literals are not consistent in their definition and a little weird. An anonymous struct literal is defined with <code>.{}</code> while a named literal is <code>Foo{}</code>. Why are they not <code>Foo.{}</code> to be consistent with the <code>.</code> syntax? As the <code>.</code> syntax seems to come from the enum syntax <code>Enum.A</code> -&gt; <code>.A</code> where the <code>Enum</code> is inferred/implied.</p>
+
+<p>Zig does follow a similar syntax to C with the literals by making identifiers start with <code>.</code>:</p>
+
+<pre><code class="language-zig">const Threshold = struct {
+    minimum: f32,
+    maximum: f32,
+
+    const default: Threshold = .{
+        .minimum = 0.25,
+        .maximum = 0.75,
+    };
+};
+</code></pre>
+
+<p>However I don’t understand the rationale behind this design in Zig. In C, the <code>.</code> exists to remove the ambiguity between assigning to a struct field and using <code>a = b</code> as an expression (because assignments are expressions in C). As an assignment is not an expression in Zig, I don’t see why the <code>.</code> is necessary. And Zig does not support C-style array initializer syntax either:</p>
+
+<pre><code class="language-c">int x[] = {
+	[1] = 123,
+	[0] = 345
+};
+</code></pre>
+
+<p>Is there another reason behind this decision that I am not aware of, or is it purely to look aesthetically similar to C?</p>
+
+<h3 id="externstruct"><a href="#externstruct">extern struct</a></h3>
+<p>Zig supports an <code>extern struct</code> type which is there to match the in-memory layout match the C ABI for the specified target. This exists because the Zig compiler is free to rearrange the fields of a Zig-native <code>struct</code> to optimize for whatever it wants, probably by rearranging the minimize padding and thus the total size.</p>
+
+<p>Personally I think reordering fields to minimize the size is optimizing for a problem that doesn’t exist any more. Russ Cox explains this well here: <a href="https://github.com/golang/go/issues/10014#issuecomment-91436342">https://github.com/golang/go/issues/10014#issuecomment-91436342</a>.</p>
+
+<blockquote>
+<p>It seems fine to me for the spec not to guarantee anything about struct field order in memory. The spec doesn’t operate at that level.</p>
+<p>That said, no Go compiler should probably ever reorder struct fields. That seems like it is trying to solve a 1970s problem, namely packing structs to use as little space as possible. The 2010s problem is to put related fields near each other to reduce cache misses, and (unlike the 1970s problem) there is no obvious way for the compiler to pick an optimal solution. A compiler that takes that control away from the programmer is going to be that much less useful, and people will find better compilers.</p>
+</blockquote>
+
+<p>I know this is a minority position but I disagree with the position that the “common” position that <strong>just</strong> minimizing the size of a <code>struct</code> is a good means to reduce cache misses. A reason against this that you want to group specific fields together rather than arbitrarily organizing them based on alignment, and if those fields that are meant to be grouped now straddle a cache-line, you have no idea just from looking if it does that. False-sharing is good example of this problem arising.</p>
+
+<p>It could be argued to use <code>extern struct</code> in those cases, but then you don’t get any of the other benefits that a Zig <code>struct</code> might offer that an <code>extern struct</code> does not have.</p>
+
+<h3 id="packedstruct"><a href="#packedstruct">packed struct</a></h3>
+<p>Zig supports a <code>packed struct</code> which defined by having an implicit backing integer, which is implicitly determined by the total bit count of the fields, or it can be explicitly specified.</p>
+
+<p>As I previously explained, I have no issue with <code>packed struct</code>s themselves but I do with the use of arbitrary bit-width integers everywhere rather than having the fields be a specific type with a specified bit width, like in C/C++.</p>
+
+<pre><code class="language-cpp">// C++
+enum SomeEnum : u32 {
+    ...
+};
+
+struct Foo {
+    int      x : 3;
+    bool     y : 1;
+    SomeEnum z : 5;
+    unsigned w : 7;
+};
+</code></pre>
+
+<pre><code class="language-zig">// Zig
+const SomeEnum = enum(u5) {
+    ...
+};
+
+const Foo = packed struct {
+    x: i3,
+    y: bool,
+    z: SomeEnum,
+    w: u7,
+};
+</code></pre>
+
+<h3 id="enum"><a href="#enum">enum</a></h3>
+<p>Zig supports C-like <code>enum</code>s with better scoping. They can also specify the backing integer type.</p>
+
+<pre><code class="language-zig">// Declare an enum.
+const Type = enum {
+    ok,
+    not_ok,
+};
+
+// Declare a specific enum field.
+const c = Type.ok;
+
+// If you want access to the ordinal value of an enum, you
+// can specify the tag type.
+const Value = enum(u2) {
+    zero,
+    one,
+    two,
+};
+
+// You can override the ordinal value for an enum.
+const Value2 = enum(u32) {
+    hundred = 100,
+    thousand = 1000,
+    million = 1000000,
+};
+</code></pre>
+
+<p>And just like structs, they can even have methods associated with them, because they are similar to a struct being a namespace.</p>
+
+<pre><code class="language-zig">const Suit = enum {
+    clubs,
+    spades,
+    diamonds,
+    hearts,
+
+    pub fn isClubs(self: Suit) bool {
+        return self == Suit.clubs;
+    }
+};
+</code></pre>
+
+<p>I also love the <code>.A</code> shorthand when using <code>enum</code>s, as it reduces a lot of repetition.</p>
+
+<p>I have nothing to complain about Zig’s <code>enum</code>s with respect to the rest of the language.</p>
+
+<h3 id="union"><a href="#union">union</a></h3>
+<p>Zig has a <code>union</code> type. By default it is an untagged union which has safety checks in safe builds. I honestly don’t understand the point of this because it’s effectively a C-style union, except with none of the benefits. Zig does have <code>extern union</code> and <code>packed union</code> which both make sense, but an untagged <code>union</code> makes no sense whatsoever to me. The only “benefits” that it gives is that it does runtime safety checks when accessing non-active fields in safety builds.</p>
+
+<pre><code class="language-zig">const Payload = union {
+    int:     i64,
+    float:   f64,
+    boolean: bool,
+};
+test &quot;simple union&quot; {
+    var payload = Payload{ .int = 1234 };
+    payload.float = 12.34;
+}
+</code></pre>
+
+<p>But at that point, why not either just have <code>extern union</code> or <code>packed union</code> only, and then enforce every other use case of <code>union</code> to be a tagged union?</p>
+
+<p>Zig’s tagged unions, which are technically a labelled-types-based sum type, appear to have taken inspiration from Pascal in terms of its syntax and usage, but doesn’t go as far as what is possible for a tag.</p>
+
+<p>You can either specify an <code>enum</code>-based tag for union explicitly:</p>
+
+<pre><code class="language-zig">const ComplexTypeTag = enum {
+    ok,
+    not_ok,
+};
+const ComplexType = union(ComplexTypeTag) {
+    ok: u8,
+    not_ok: void,
+};
+
+</code></pre>
+
+<p>Or have the tag be generated from the field names:</p>
+
+<pre><code class="language-zig">const Variant = union(enum) {
+    int: i32,
+    boolean: bool,
+
+    // void can be omitted when inferring enum tag type.
+    none,
+}
+</code></pre>
+
+<p>or even have a specified integer size for the tag with specific tag values:</p>
+
+<pre><code>const Tagged = union(enum(u32)) {
+    int:     i64  = 123,
+    boolean: bool =  67,
+};
+</code></pre>
+
+<p>It’s a very versatile tagged-union type but only really works with <code>enum</code>s being the tag. In languages like Pascal/Delphi, any value could be used and also be embedded within a <code>record</code>:</p>
+
+<pre><code class="language-delphi">type
+  MyUnion = record                // Pascal's version of a struct -- or union
+    case Tag: Byte of             // This doesn't have to be called Tag, it can have any name
+      0: (B0, B1, B2, B3: Byte);  // only one of these branches is present
+      1: (W0, W1: Word);          // they overlap each other in memory
+      2: (L: Longint);
+  end;
+
+  AnotherUnion = record
+    case Tag: Boolean of
+      False: (A: Byte);
+      True:  (B: Word);
+  end;
+</code></pre>
+
+<p>Zig’s <code>switch</code> syntax when used with <code>union</code>s, <code>enum</code>s, and other things in general, seems geared towards a more functional style than doing what C/C++ has done with case blocks.</p>
+
+<pre><code class="language-zig">const Variant = union(enum) {
+    int: i32,
+    boolean: bool,
+
+    // void can be omitted when inferring enum tag type.
+    none,
+
+    fn truthy(self: Variant) bool {
+        return switch (self) {
+            Variant.int =&gt; |x_int| x_int != 0,
+            Variant.boolean =&gt; |x_bool| x_bool,
+            Variant.none =&gt; false,
+        };
+    }
+};
+</code></pre>
+
+<p>In this case, a <code>switch</code> is an expression, and each case of a <code>switch</code> must also be an expression.  The <code>|x|</code> capture group syntax is just odd to me. I understand what it is doing but its placement seems weird. Most other languages have it on the left-hand-side and/or coupled with pattern matching syntax. It being on the right-hand-side just before the “body” of the case is just odd to me, since it goes against most conventions from other languages.</p>
+
+<p>It just seems kind of lacking what is possible with Zig’s tagged union. I wish it did a lot more, with a lot better syntax when switching too.</p>
+
+<h2 id="opaque"><a href="#opaque">opaque</a></h2>
+<p>I have little issue with this as a concept in Zig. It works well for its intended purpose: denoting a type with an unknown (but non-zero) size and alignment.</p>
+
+<h2 id="errors"><a href="#errors">Errors</a></h2>
+<p>I am skipping the control flow sections just for the moment as I want to keep to types. Zig uses something called an error set type throughout its code. An error set is kind of like an <code>enum</code>, but the names are shared across the entire compilation and get assigned effectively a random number greater than 0, and currently the size of an error set type is <code>u16</code> internally, meaning there is a maximum limit the number of named errors possible. The number of possible errors is not really an issue in practice (at least not yet), but the problem is that none of this is deterministic <strong>across</strong> compilation boundaries. By this I mean the internal number an error set type name may get in one compilation unit might not be similar to another compilation unit, and that they cannot be transferred across shared library boundaries or similar.</p>
+
+<p>You can have named sets of enum values like the following and they will coerce together:</p>
+
+<pre><code class="language-zig">const FileOpenError = error{
+    AccessDenied,
+    OutOfMemory,
+    FileNotFound,
+};
+
+const AllocationError = error{
+    OutOfMemory,
+};
+</code></pre>
+
+<p>You can even “or” together different error sets <code>const AppError = MyError || OtherError;</code>.</p>
+
+<p>This is fundamentally because errors belong to a global “error type”. It is nice that is just an error code rather than also have a payload, because it means it restricts its usage to something smaller. If you want a payload, then an explicit tagged union might be a much better use case (even if its syntax is not great, especially to create a Result type).</p>
+
+<p>In the case where you don’t care about the actual type of the error, <code>anyerror</code> can be used to refer to the global error type.</p>
+
+<p>Where Zig’s error type benefits is in conjunction with the error union denoted with <code>ErrorSet!T</code>, inferred with <code>!T</code>, or a global catch all with <code>anyerror!T</code>. Most of the time you see <code>!T</code> style error unions where the possible errors are inferred from the return values. This means you cannot obviously know what errors are possibly returned from a function just by reading the signature. You either have to read the body of the function or have to rely on some external tooling. I’d much prefer people to use explicit error sets even in those cases, but I understand why they prefer the inferred set, mainly out of laziness (sometimes due to non-trivial-knowability).</p>
+
+<p>If I ever see <code>anyerror!T</code> in a Zig code base, I already know I’m in for a rough time because it’s effectively just become a “we give up” situation. It means the programmer has no idea what they are doing and are effectively saying “there is an error, we don’t care what it is”, which at that point is no different to people throwing an exception and never handling it properly.</p>
+
+<p>I do like the syntactic sugar of <code>error.Foo</code> being short for <code>error{Foo}.Foo</code>. It is a nice thing to have since it does enforce the concept that it’s all about “sets” to begin with.</p>
+
+<h3 id="resulttype"><a href="#resulttype">Result type</a></h3>
+<p>If a <code>Result</code> type is desired, it is relatively simple to implement it with <code>comptime</code> + <code>union(enum)</code>. However sadly, as it is now a user-level type, it lacks any of the syntactic sugar that comes with the error-set operations. No <code>try</code>, <code>catch</code>, <code>errdefer</code>, etc. In practice, it means I have usually had to use <code>!T</code> with a <code>err: *ErrorValue</code> parameter in the functions that I use in Zig to have the “benefits” of the syntax. This is sadly closer to emulating multiple return values and not the behavior I want.</p>
+
+<pre><code class="language-zig">pub fn Result(comptime T: type, comptime Err: type) type {
+    return union(enum) {
+        success: T,
+        failure: Err,
+        const Self = @This();
+        pub fn ok(value: T) Self {
+            return .{ .success = value }
+        }
+        pub fn err(value: T) Self {
+            return .{ .failure = value }
+        }
+        pub fn isOk(self: Self) bool {
+            return switch (self) {
+                .success =&gt; true,
+                .failure =&gt; false,
+            }
+        }
+        pub fn isErr(self: Self) bool {
+            return switch (self) {
+                .success =&gt; false,
+                .failure =&gt; true,
+            }
+        }
+        pub fn unwrap(self: Self) T {
+            return switch (self) {
+                .success =&gt; |val| val,
+                .failure =&gt; @panic(&quot;unwrap on an Err value&quot;)
+            }
+        }
+        // etc.
+    }
+}
+</code></pre>
+
+<h3 id="catch"><a href="#catch">catch</a></h3>
+<p>When handling error sets, it’s common to want to have a default value or handle the error branch. Because the error union is completely separate to the tagged unions, they have a different syntax. Which means you cannot treat them like a normal union, and requires merging the use of an <code>if</code> and a <code>switch</code> together, which is honestly a little cumbersome to use. However it is clear enough syntax most of the time:</p>
+
+<pre><code class="language-zig">const number = parseU64(str, 10) catch 13;
+</code></pre>
+
+<p>If you want to clarify than an error state should never be possible:</p>
+
+<pre><code class="language-zig">const number = parseU64(str, 10) catch unreachable;
+</code></pre>
+
+<p>And if you want to access the error itself when you “catch” to do specific logic, you can with the same capture syntax we found before with a <code>switch</code>:</p>
+
+<pre><code class="language-zig">const number = parseU64(str, 10) catch |err| return err;
+</code></pre>
+
+<p>This here is actually a shortcut for the next operator:</p>
+
+<h3 id="try"><a href="#try">try</a></h3>
+<pre><code class="language-zig">const number = parseU64(str, 10) catch |err| return err;
+const number = try parseU64(str, 10); // equivalent
+</code></pre>
+
+<p>The <code>try x</code> syntax (shorthand for <code>x catch |err| return err</code>) is genuinely convenient because propagating errors is an extremely common pattern in Zig. Unfortunately, it does mean it only works with error union types. So if you have a function that returns <code>?T</code> (an optional), you cannot use <code>try</code> as a short-circuit, and now you need to use <code>orelse return null</code>.</p>
+
+<p>Given how useful the monadic “short-circuit on failure” pattern is in languages like Rust (with ? on both Result and Option) and Haskell (with Maybe and Either both working seamlessly in do notation), it feels inconsistent that Zig doesn’t offer a unified or at least similar mechanism for both error unions and optionals.</p>
+
+<p>Another minor frustration with <code>try</code> is that it’s a prefix operator acting as syntactic sugar for early return. This makes chaining multiple fallible calls awkward and unattractive, compared to other languages. For example:</p>
+
+<pre><code class="language-zig">// Zig's `try` operator
+try (try foo()).bar()
+
+// Rust's try propagation `?` operator
+foo()?.bar()?
+</code></pre>
+
+<p>This feels clunky compared to what an expression-oriented language could allow. Zig is generally quite expression-oriented, <code>try</code> appears to discourage chaining and seems to push towards separate statements and intermediate values, which stands in contract with the rest of the language.</p>
+
+<p>I’d be curious to hear the reasoning behind keeping <code>try</code> exclusive to error union types and not providing a uniform or separate short-circuiting syntax across both failure-carrying types.</p>
+
+<h3 id="catch"><a href="#catch">catch</a></h3>
+<p>To explain the <code>if</code>-<code>switch</code> example from before which is a lot more explicit but still cumbersome to use:</p>
+
+<pre><code class="language-zig">fn doAnotherThing(str: []u8) error{InvalidChar}!void {
+    if (parseU64(str, 10)) |number| {
+        doSomethingWithNumber(number);
+    } else |err| switch (err) {
+        error.Overflow =&gt; {
+            // handle overflow...
+        },
+        else =&gt; |leftover_err| return leftover_err,
+    }
+}
+</code></pre>
+
+<p>I just find this very annoying to read and use. In other languages with pattern matching, I would normally be able to keep all of this inline and just have a single switch, because the “Result” type is just a normal sum/union type. At least it’s possible in Zig, even if it’s not as <em>elegant</em> as other languages.</p>
+
+<h2 id="optionals"><a href="#optionals">Optionals</a></h2>
+<p>As I briefly discussed already, Zig has optional/maybe types which are denoted with <code>?</code>. I have not much to say about these other than they are a good addition to the language and make the language feel a lot more functional in general.</p>
+
+<h2 id="zerobittypes"><a href="#zerobittypes">Zero Bit Types</a></h2>
+<p>Zig has a lot of zero-bit/byte sized types. The obvious one is <code>void</code>, but it also has <code>u0</code> and <code>i0</code>. I am not sure what the point of <code>u0</code> and <code>i0</code> are for other than “completeness” I guess with <code>@Int</code>. If someone can tell me an actual practical use case of 0-width integers, please do!</p>
+
+<h2 id="blocks"><a href="#blocks">Blocks</a></h2>
+<p>Now finally on to the control flow section. Zig has blocks just like most C-likes. The main difference is that blocks in Zig are expression. But the way they become an expression is by giving them a label.</p>
+
+<pre><code class="language-zig">var y: i32 = 123;
+
+const x = blk: {
+    y += 1;
+    break :blk y;
+};
+</code></pre>
+
+<p>I understand the syntax because it does allow you to <code>break</code> from a block early if necessary and still give it a final value, but it’s honestly really ugly syntax. Why does the <code>break</code> need to have <code>:blk</code> and not just <code>blk</code>? Why is it “break” and not another construct similar to <code>return</code>, like <code>give y</code>? The real oddity is when this is then applied to <code>continue</code>, but I’ll wait until that comes us.</p>
+
+<p>Also because all blocks are expressions, that means an empty block has a type of <code>void</code>. At least this is consistent behavior and I like that.</p>
+
+<h3 id="shadowingisnotallowed"><a href="#shadowingisnotallowed">Shadowing is not Allowed</a></h3>
+<p>Zig prohibits shadowing declarations from parent blocks. While I understand the rationale, I believe this should be a togglable warning rather than a hard error. Enforcing it as an error often leads to actual bugs in practice. A prime example is when copying a for loop into another for loop and failing to update iterator labels in the proper sequence. Since common names like <code>i</code> and <code>j</code> are widely used, developers frequently modify the wrong instance first, inadvertently introducing errors due to inconsistent renaming. To avoid these issues, I’m forced to invent awkward or poorly chosen variable names; names that would ideally be replaced with chained calls or other patterns. Naming is hard, and allowing shadowing would promote more localized reasoning and clearer thinking.</p>
+
+<h2 id="switch"><a href="#switch">switch</a></h2>
+<p>Similar to blocks, <code>switch</code>es in Zig are expressions. The syntax departs from C quite a bit but it’s still easy enough to write.</p>
+
+<pre><code class="language-zig">const a: u64 = 10;
+const zz: u64 = 103;
+
+// All branches of a switch expression must be able to be coerced to a
+// common type.
+//
+// Branches cannot fallthrough. If fallthrough behavior is desired, combine
+// the cases and use an if.
+const b = switch (a) {
+    // Multiple cases can be combined via a ','
+    1, 2, 3 =&gt; 0,
+
+    // Ranges can be specified using the ... syntax. These are inclusive
+    // of both ends.
+    5...100 =&gt; 1,
+
+    // Branches can be arbitrarily complex.
+    101 =&gt; blk: {
+        const c: u64 = 5;
+        break :blk c * 2 + 1;
+    },
+
+    // Switching on arbitrary expressions is allowed as long as the
+    // expression is known at compile-time.
+    zz =&gt; zz,
+    blk: {
+        const d: u32 = 5;
+        const e: u32 = 100;
+        break :blk d + e;
+    } =&gt; 107,
+
+    // The else branch catches everything not already captured.
+    // Else branches are mandatory unless the entire range of values
+    // is handled.
+    else =&gt; 9,
+};
+</code></pre>
+
+<p>It is nice that slices allow for multiple cases, ranges, branches, and the default cause is called <code>else</code>.</p>
+
+<p>Having <code>...</code> as well as <code>..</code> is really confusing and I wish was just <code>..=</code> and <code>..&lt;</code>, respectively. This is something Nim, Odin, and Rust did right.</p>
+
+<p>Another thing I do dislike about Zig is how <code>switch</code>es are exhaustive unless you specify an <code>else</code> clause. One of my issues with this is the assumption of being exhaustive. I understand it is Zig’s behavior to assume <code>else unreachable</code> in the exhaustive case, but it’s not uncommon to deal with certain libraries which will do unsafe things, especially through FFI. In this case, exhaustive and <code>else</code> are separate cases which should be treated separately. <code>else</code> is the catch-all case which handles invalid cases and unhandled cases, but if Zig had an attribute system adding <code>#[nonExhaustive]</code>, then that would state that the user is not handling every case but also wants to use <code>else</code> too since there might be “invalid” cases.</p>
+
+<p>As Zig’s <code>switch</code> is an expression, it does not appear to allow a fall-through like in C/C++, however it does through <code>continue</code>.</p>
+
+<pre><code class="language-zig">test &quot;switch continue&quot; {
+    sw: switch (@as(i32, 5)) {
+        5 =&gt; continue :sw 4,
+
+        // `continue` can occur multiple times within a single switch prong.
+        2...4 =&gt; |v| {
+            if (v &gt; 3) {
+                continue :sw 2;
+            } else if (v == 3) {
+
+                // `break` can target labeled loops.
+                break :sw;
+            }
+
+            continue :sw 1;
+        },
+
+        1 =&gt; return,
+
+        else =&gt; unreachable,
+    }
+}
+</code></pre>
+
+<p>I just find the use of <code>continue</code> confusing to read since it is overloading the concept of what it means. This should be a separate keyword since it is a separate construct. Why not <code>fallthrough</code> or <code>retrycase</code> or something similar? I’d argue most people associate <code>continue</code> with just loops, and not a <code>switch</code>. With the current syntax, I prefer using an explicit loop as shown in this example:</p>
+
+<pre><code class="language-zig">test &quot;switch continue, equivalent loop&quot; {
+    var sw: i32 = 5;
+    while (true) {
+        switch (sw) {
+            5 =&gt; {
+                sw = 4;
+                continue;
+            },
+            2...4 =&gt; |v| {
+                if (v &gt; 3) {
+                    sw = 2;
+                    continue;
+                } else if (v == 3) {
+                    break;
+                }
+
+                sw = 1;
+                continue;
+            },
+            1 =&gt; return,
+            else =&gt; unreachable,
+        }
+    }
+}
+</code></pre>
+
+<p>Although the Zig Language Reference said this, it is not clear:</p>
+
+<blockquote>
+<p>This can improve clarity of (for example) state machines, where the syntax continue :sw .next_state is unambiguous, explicit, and immediately understandable.</p>
+</blockquote>
+
+<p>I understand why it exists, and it allows the compiler to do optimizations such as unconditional branches, but again, my problem here is just the use of <code>continue</code> rather than a different keyword.</p>
+
+<h2 id="while"><a href="#while">while</a></h2>
+<p><code>while</code> loops in Zig are pretty simple to understand. Other than the capture group syntax (you might have guessed I just don’t like it), my other major complaint is that <code>while</code> is trying to do too many things at once, or not enough of the right things.</p>
+
+<p>One aspect of its syntax is the post-condition expression, which is trying to emulate two-thirds of a C-style for loop.</p>
+
+<pre><code class="language-zig">var i: usize = 1;
+var j: usize = 1;
+while (i * j &lt; 2000) : ({
+    i *= 2;
+    j *= 3;
+}) {
+    const my_ij = i * j;
+    _ = my_ij;
+}
+</code></pre>
+
+<p>In C, you would write the following:</p>
+
+<pre><code class="language-c">for (size_t i = 1, j = 1; i * j &lt; 2000; i *= 2, j *= 2) {
+    size_t my_ij = i * j;
+    _ = my_ij;
+}
+</code></pre>
+
+<p>There are a few main differences between the Zig example and C example which annoy me.</p>
+
+<p>In the C example, the variables <code>i</code> and <code>j</code> are scoped within the <code>for</code> loop but in the case of Zig’s <code>while</code>, they must be in the outside scope. None of Zig’s control flow allows for this, and it’s perplexing. Most modern languages have such a way to do this (C++, Go, Rust, Odin, Swift, etc.), but Zig doesn’t. And for a language that disallows shadowing too, this is really annoying to deal with, too. Each loop iterator name needs to have a unique name, or I just don’t allow stuff like this within the same scope.</p>
+
+<p>Why does Zig just not allow you to declare things within the control flow construct?</p>
+
+<p>The next thing is where things start to get a bit crazy: loops having a value.</p>
+
+<pre><code class="language-zig">var i = begin;
+return while (i &lt; end) : (i += 1) {
+    if (i == number) {
+        break true;
+    }
+} else false;
+</code></pre>
+
+<p>At least it is consistent with control flow being expressions but this puts me off quite a bit. Some languages, like Python, do support an <code>else</code> clause of loops but they are rarely used. But in this case, they are kind of necessary. As previously state, the <code>i</code> is declared in the parent scope, and I am not sure why this is a even an expression like this. I’d rather it was just a simple <code>return</code> than making a loop an expression.</p>
+
+<p>Zig has this problem in general of just being quite dense and having things which are not easy to scan, and this is another example of Zig not being very easy to scan. Yes it might be “readable” per token, but most people don’t read code that way from my experience.</p>
+
+<p>Why couldn’t Zig just have a C-style <code>for</code> loop (even if it was named <code>while</code>)?</p>
+
+<pre><code class="language-zig">// Pseudo-Zig code
+while (var i = begin; i &lt; end; i += 1) {
+    if (i == number) {
+        return true;
+    }
+}
+return false;
+</code></pre>
+
+<p>This is much clearer, doesn’t pollute the parent scope, and even makes it obvious that this should probably be a <code>for (begin..end) |i| {...}</code> style loop too.</p>
+
+<h3 id="while"><a href="#while">while</a></h3>
+<p>Being consistent with blocks, <code>while</code> loops can be labelled. This is honestly a very nice aspect of them which I am glad many modern imperative languages are adopting. It means it clearer where you are <code>break</code>ing or <code>continue</code>ing from and don’t have to use temporary variables or even <code>goto</code>.</p>
+
+<h3 id="inlinewhile"><a href="#inlinewhile">inline while</a></h3>
+<p><code>inline while</code> loops are a form of loop unrolling which is sometimes useful when doing optimizations. However, my main critique of them is that they blur the line between <code>comptime</code> and just basic unrolling. Take this example from the documentation:</p>
+
+<pre><code class="language-zig">const expect = @import(&quot;std&quot;).testing.expect;
+
+test &quot;inline while loop&quot; {
+    comptime var i = 0;
+    var sum: usize = 0;
+    inline while (i &lt; 3) : (i += 1) {
+        const T = switch (i) {
+            0 =&gt; f32,
+            1 =&gt; i8,
+            2 =&gt; bool,
+            else =&gt; unreachable,
+        };
+        sum += typeNameLength(T);
+    }
+    try expect(sum == 9);
+}
+
+fn typeNameLength(comptime T: type) usize {
+    return @typeName(T).len;
+}
+</code></pre>
+
+<p>That loop unrolling is a <code>comptime</code> construct that is evaluated with <code>comptime</code>. I’d rather this be denoted as <code>comptime while</code> rather than <code>inline while</code>. I understand it means that the <code>sum += typeNameLength(T);</code> value is unrolled and then evaluated at runtime (probably trivially optimized out in this case), but it’s muddying the waters of the concepts between loop unrolling and <code>comptime</code>. In many ways, <code>inline</code> blurs the lines between unrolling, <code>comptime</code>, and just a obscured macro.</p>
+
+<h2 id="for"><a href="#for">for</a></h2>
+<p>Zig’s <code>for</code> loop is a for-each loop. It keeps with the capture group syntax (e.g. <code>|x|</code>) like the other constructs in the language. I like that it is consistent, I just dislike the syntax and wish for something more conventional.</p>
+
+<p>One of the real weird oddities is how Zig expressions iterate over something coupled with an iterating index.</p>
+
+<pre><code class="language-zig">// To access the index of iteration, specify a second condition as well
+// as a second capture value.
+var sum: i32 = 0;
+for (items, 0..) |_, i| {
+    try expect(@TypeOf(i) == usize);
+    sum += @as(i32, @intCast(i));
+}
+try expect(sum == 10);
+</code></pre>
+
+<p>To explain this syntax, what <code>for</code> is doing is iterating over TWO values. <code>items</code> and the unbounded range <code>0..</code>. Iteration over multiple values at once can be quite useful, especially anything structure-of-arrays related:</p>
+
+<pre><code class="language-zig">for (items, items2, items3) |i, j, k| {
+    count += i + j + k;
+}
+</code></pre>
+
+<p>The problem is that this is mostly an abuse of syntax. <code>0..</code> and the like is pretty much only useful in cases like this, so why does the language not allow for things like this?</p>
+
+<p>Go allows for this through <code>range</code>:</p>
+
+<pre><code class="language-go">for i       := range items {...}
+for i, elem := range items {...}
+for _, elem := range items {...}
+</code></pre>
+
+<p>Odin has this with <code>in</code>:</p>
+
+<pre><code class="language-odin">for elem    in items {...}
+for elem, i in items {...}
+for _,    i in items {...}
+</code></pre>
+
+<p>And most other functional-like languages use iterators do that explicitly, like Rust:</p>
+
+<pre><code class="language-rust">for (i, elem) in array.iter().enumerate() {...}
+</code></pre>
+
+<p>Zig occupies an awkward middle ground that feels off-kilter. It technically works, but the approach comes across more as a workaround than a genuine fix for the underlying issue.</p>
+
+<h3 id="inlinefor"><a href="#inlinefor">inline for</a></h3>
+<p>Similar to <code>inline while</code>, I really dislike <code>inline for</code> muddying the water between unrolling and <code>comptime</code> and macros.</p>
+
+<h2 id="if"><a href="#if">if</a></h2>
+<p><code>if</code> seems like it should be relatively simple, but it again allows for the capture group <code>|x|</code> syntax. Other than my general gripes about this, it is at least consistent. And its use with error unions and options with the capture groups are quite useful.</p>
+
+<p>However, there is this weird aspect about Zig which applies to both <code>if</code> and <code>switch</code>, if the condition is <code>comptime</code>-known, the other cases might never get type checked. This is really bizarre coming from other statically typed languages since there is no distinction between a runtime evaluated <code>if</code> and a <code>comptime</code> evaluated <code>if</code>. This behavior in Zig has existed since the very beginning and is never going to be changed. I just wish you had to write <code>inline if</code> or <code>comptime if</code> if you want that a specific behavior. Although I understand the design reasons behind it, and disagree with them, I believe this (anti-)feature is fundamentally flawed from both a user-experience and a bug-detection standpoint. As I’m working in a statically typed language, I don’t want it to behave like a dynamically typed scripting language that only validates code at runtime when it’s executed. This is the most frustrating limitation of dynamic typing, and now it’s been introduced into a statically typed system. Why?</p>
+
+<h2 id="defer"><a href="#defer">defer</a></h2>
+<p>Loads of modern languages now have some sort of scoped-exit state. Zig’s is called <code>defer</code>. I have no problems with this whatsoever. I am glad they have also disallowed <code>return</code> within a <code>defer</code>.</p>
+
+<h3 id="errdefer"><a href="#errdefer">errdefer</a></h3>
+<p>To complement <code>defer</code> and the error sets, there is <code>errdefer</code> which is executed if and only if an <code>error</code> value is returned (it is kind of like <code>defer {if (returnErrorSet != null) {...}}</code>).</p>
+
+<p>With the rest of the error-handling system, <code>errdefer</code> is well-designed and a strong complement to the language. However, I’d prefer if it were more composable by allowing users to inspect the actual return value, even in non-error cases, to enable more flexible and expressive error handling.</p>
+
+<h2 id="noreturn"><a href="#noreturn">noreturn</a></h2>
+<p>This diverging/never type construct does exist in other functional languages like Rust (i.e. the Never type <code>!</code>), and can be quite useful. Glad to see it in Zig.</p>
+
+<h2 id="functions"><a href="#functions">Functions</a></h2>
+<p>Functions can be values in Zig, which is great (and expected nowadays). Functions are non-capturing since Zig has manual memory management and wants a unified function type. Similar to C, function types are specified as pointers:</p>
+
+<pre><code class="language-zig">// Function pointers are prefixed with `*const `.
+const Call2Op = *const fn (a: i8, b: i8) i8;
+fn doOp(fnCall: Call2Op, op1: i8, op2: i8) i8 {
+    return fnCall(op1, op2);
+}
+</code></pre>
+
+<h3 id="lambdasyntax"><a href="#lambdasyntax">Lambda Syntax</a></h3>
+<p>Now, the real nightmare: lambda syntax. Zig does support inline function literals (i.e. lambda functions), a feature common in many languages, but due to its declaration rules, where <code>fn</code> and <code>const</code> are distinct, you must first define a <code>struct</code> type to serve as a wrapper before creating a method to act as the lambda function. This mirrors the pattern used for static variables and adds unnecessary boilerplate.</p>
+
+<pre><code class="language-zig">const foo = struct {
+    pub fn foo(a, b: i32) i32 {
+        return a+b;
+    }
+}.foo;
+</code></pre>
+
+<p>The reason this is not just following is annoying, and I cannot understand the why it is not allowed:</p>
+
+<pre><code class="language-zig">const foo = fn(a, b: i32) i32 {
+    return a+b;
+};
+</code></pre>
+
+<p>When I need a non-capturing lambda, typically for a simple inline callback, I want to write it directly. But Zig’s overly cumbersome syntax forces me to use a clunky struct-based workaround. I can’t believe anyone actually defends this nonsense.</p>
+
+<h3 id="passbyvalueparameters"><a href="#passbyvalueparameters">Pass-by-value Parameters</a></h3>
+<p>Most values in Zig are passed by value, such as integers and floats, which means the parameters are copied, and the copy is then available in the function body. However when a type gets “large”, the compiler can decide to pass a value more efficiently by not doing a copy and passing the value implicitly by reference instead. Most of the time this is what people want and expect however it can cause a bunch of aliasing problems.</p>
+
+<pre><code class="language-zig">fn foo(val: LargeStruct, ptr: *LargeStruct) {
+    ptr.*.x = 123;
+    std.debug.print(&quot;value: {}&quot;, .{val});
+}
+
+...
+
+var ls: LargeStruct = ...;
+ls.x = 333;
+foo(ls, &amp;ls);
+</code></pre>
+
+<p>Most people would expect <code>333</code> to be printed however because <code>val</code> and <code>ptr</code> actually alias, this means that <code>123</code> will be printed instead because <code>val</code> actually refers to the same memory as <code>ptr</code>.</p>
+
+<p>Zig does not have a strong enough type system to guarantee avoiding this aliasing issue, nor is it like Fortran (where everything is passed by reference/pointer). For Zig, I wish you had to write <code>noalias</code> specifically to prevent this from happening, and then it can do the pointer optimization.</p>
+
+<p>But this parameter aliasing bug is the least of the problems in practice, there is something much worse coming…</p>
+
+<h3 id="returnlocationsemantics"><a href="#returnlocationsemantics">Return Location Semantics</a></h3>
+<p>Zig also applies these aliasing rules to return locations too. In fact this is even worse than the previous aliasing parameter problem, and these semantics are not just limited to return values from functions. Using the example from the documentation which applies to literals:</p>
+
+<pre><code class="language-zig">const expect = @import(&quot;std&quot;).testing.expect;
+test &quot;attempt to swap array elements with array initializer&quot; {
+    var arr: [2]u32 = .{ 1, 2 };
+    arr = .{ arr[1], arr[0] };
+    // The previous line is equivalent to the following two lines:
+    //   arr[0] = arr[1];
+    //   arr[1] = arr[0];
+    // So this fails!
+    try expect(arr[0] == 2); // succeeds
+    try expect(arr[1] == 1); // fails
+}
+</code></pre>
+
+<p>Instead of creating a temporary value for the array literal, the compiler reuses the memory of the left-hand-side variable, resulting in unexpected behavior. The same issue affects function return values and can cause more frequent and subtle aliasing bugs.</p>
+
+<pre><code class="language-zig">var ls: LargeStruct = ...;
+ls = foo(ls, 123);
+</code></pre>
+
+<p>A lot of people expect that this would never reuse the memory, but guess what… it does.</p>
+
+<p>This anti-feature needs to be removed from Zig as soon as possible, if it is not already removed.</p>
+
+<p>Zig aspires to be a language it fundamentally isn’t. Its type system lacks the strength to enforce the guarantees needed for certain optimizations. Zig wants to be like Rust in many respects, but it lacks the borrow checker and lifetime semantics; precisely the mechanisms that make those guarantees possible. Zig needs to pause and clearly define what it truly aims to be.</p>
+
+<h3 id="generaltypecheckingofafunctionbody"><a href="#generaltypecheckingofafunctionbody">General Type Checking of a Function Body</a></h3>
+<p>Zig has a peculiar form of “late” type checking that applies not only to function bodies but to most code. If a piece of code, whether regular runtime code or comptime code, is never executed or referenced, it is never type checked at all. This behavior might be justifiable for <code>comptime</code> or <code>anytype</code> code (similar to C++ templates), but applying it to ordinary runtime code is deeply strange and practically invites undetected bugs.</p>
+
+<p>It’s widely known that comments often contain errors because they’re never executed. Zig’s “late” typing creates the same problem: code that isn’t reached is effectively unchecked. When programming, I expect the compiler to catch as many errors as possible—this does the opposite. As a result, Zig ends up feeling like a dynamically typed language, but with all the downsides and none of the benefits. I have already complained about this in a previous section, so I won’t repeat myself any more.</p>
+
+<h2 id="casting"><a href="#casting">Casting</a></h2>
+<p>Now my least favorite topic: casting in Zig. Or more accurately: implicit conversions governed by obscure, ad-hoc rules, requiring you to write more code for no meaningful gain.</p>
+
+<h3 id="implicitconversions"><a href="#implicitconversions">Implicit Conversions</a></h3>
+<p>Let’s start with the first aspect: implicit conversion rules. Zig allow implicit conversions between types which do not have any value-information loss.</p>
+
+<pre><code class="language-zig">const a: u8 = 1;
+const b: u16 = a;
+_ = b;
+</code></pre>
+
+<p>This seems fine in theory (since <code>u16</code> can represent every value <code>u8</code> can) but the specific rules that they use for integers (and floats) actually results in unexpected overflows when operations should be perfectly safe.</p>
+
+<p>Let’s take this basic example:</p>
+
+<pre><code class="language-zig">var a: u8 = 53;
+var b: u8 = 34;
+var c: u16 = a * b;
+</code></pre>
+
+<p>What do you expect to happen? The result is “illegal” because <code>a * b</code> overflows. Zig applies naive implicit type conversions, which cause an overflow that shouldn’t have been necessary in the first place. To make this more explicit with Zig’s explicit <code>@as</code> syntax, this is what is happening:</p>
+
+<pre><code class="language-zig">var c: u16 = @as(u16, @as(u8, a) * @as(u8, b));`
+</code></pre>
+
+<p>As you can see, it is doing the multiplication first as <code>u8</code> and then tries to convert to <code>u16</code>, but this is why it results in an overflow (<code>53 * 34 = 1802 &gt; 255</code>).</p>
+
+<h4 id="possibleapproachestoimplicitconversions"><a href="#possibleapproachestoimplicitconversions">Possible Approaches to Implicit Conversions</a></h4>
+<p>From what I can think of, there are a five different options when approaching implicit conversions of this kind:</p>
+
+<ul>
+<li>(1) Disallow implicit conversions entirely (e.g. Go)</li>
+<li>(2) (Naive Unidirectional) Bottom up type inference (e.g. Zig)</li>
+<li>(3) Convert to a “natural” register size first and then truncate when needed (e.g. C/C++)</li>
+<li>(4) Convert to the largest possible type and do the calculation</li>
+<li>(5) (Bidirectional) Top down type inference</li>
+</ul>
+
+<p>Zig is using (2) and in my opinion is the worst option possible out the selection. The best in my opinion is either (1) or (5).</p>
+
+<p>Option (3), which is what C does, always implicitly converts to <code>int</code> (which was meant to be the natural register-sized integer, but due to historical reasons no longer is) to do its calculations. The equivalent would look closer to this:</p>
+
+<pre><code class="language-zig">// Option 3 - C-ish style
+// Natural register size of `u32`
+var c: u16 = @as(u16, @truncate(@as(u32, a) * @as(u32, b)));`
+
+// A more complicated example: ((a * b) * c) * d
+var a: u8 = ...;
+var b: u16 = ...;
+var c: u32 = ...;
+var d: u64 = ...;
+
+var e: u64 = @as(u64, (@as(u32, a) * @as(u32, b) * c)) * d;
+</code></pre>
+
+<p>This means <code>c == 1802</code> without incurring any “illegal” overflow.</p>
+
+<p>Option (4) would be do something similar to the C approach to convert to the largest possible integer type and then truncate down. This is similar to option (3) but in the case of option (3), the natural register size might be smaller than the largest possible integer size. In the case of Zig, the largest integer type is <code>u65535</code>, which is not useful at all, so let’s assume it’s just <code>u64</code> for sanity’s sake:</p>
+
+<pre><code class="language-zig">// Option 4
+var c: u16 = @as(u16, @truncate(@as(u6, a) * @as(u6, b)));`
+
+
+// A more complicated example: ((a * b) * c) * d
+var a: u8 = ...;
+var b: u16 = ...;
+var c: u32 = ...;
+var d: u64 = ...;
+
+var e: u64 = ((@as(u64, a) * @as(u64, b)) * @as(u64, c)) * d;
+</code></pre>
+
+<p>Another approach, which is my preferred approach, is Option (5), i.e. to propagate the type-hint from the left-hand-side “top-down” so that it can use it the “largest” type down the syntax tree.</p>
+
+<pre><code class="language-zig">// Option 5
+var c: u16 = @as(u16, a) * @(u16, b);
+</code></pre>
+
+<p>The final option, Option (1), would be to disallow implicit conversions between such types and require explicit casts. This places the responsibility on the programmer to clearly define the intended behavior. In languages like Go, this isn’t an issue because type casts are concise. In Zig, however, explicit casting is extremely verbose, making this approach far less practical.</p>
+
+<p>And sadly, Zig’s bottom up type inference approach applies between floats too, leading to possible similar problems, but probably less common due to people usually sticking to a single float type throughout most of their code.</p>
+
+<p>Zig’s choosing the naive bottom up approach introduces more bugs than necessary, and is honestly the worst possible option on that list. I doubt this will ever get fixed either.</p>
+
+<h3 id="explicitconversions"><a href="#explicitconversions">Explicit Conversions</a></h3>
+<p>When performing a cast in Zig, you face a wide array of built-in casting functions, each with specific semantics and safety guarantees, leading to unnecessary complexity and choice overload. Here is the plethora of options to choose from:</p>
+
+<ul>
+<li><code>@as</code> - a cast when the conversion is unambiguous and safe</li>
+<li><code>@bitCast</code> - change type but maintain bit representation</li>
+<li><code>@alignCast</code> - make a pointer have more alignment</li>
+<li><code>@enumFromInt</code> - obtain an enum value based on its integer tag value</li>
+<li><code>@errorFromInt</code> - obtain an error code based on its integer value</li>
+<li><code>@errorCast</code> - convert to a smaller error set</li>
+<li><code>@floatCast</code> - convert a larger float to a smaller float</li>
+<li><code>@floatFromInt</code> - convert an integer to a float value</li>
+<li><code>@intCast</code> - convert between integer types</li>
+<li><code>@intFromBool</code> - convert true to 1 and false to 0</li>
+<li><code>@intFromEnum</code> - obtain the integer tag value of an enum or tagged union</li>
+<li><code>@intFromError</code> - obtain the integer value of an error code</li>
+<li><code>@intFromFloat</code> - obtain the integer part of a float value</li>
+<li><code>@intFromPtr</code> - obtain the address of a pointer</li>
+<li><code>@ptrFromInt</code> - convert an address to a pointer</li>
+<li><code>@ptrCast</code> - convert between pointer types</li>
+<li><code>@truncate</code> - convert between integer types, chopping off bits</li>
+</ul>
+
+<p>I’d argue that most of these casting distinctions provide no practical benefit; neither to developers nor to external tooling.</p>
+
+<p><code>@bitCast</code> is great, as well maybe <code>@alignCast</code>, but why is it actually useful to be explicit about a cast for <code>@intFromFloat</code> or <code>@ptrCast</code> or <code>@floatCast</code>, etc. I honestly don’t why these distinctions are made to someone <strong>in practice</strong>. It’s a hypothesis that has just shown to be typing way more in practice that is actually useful. I understand that LLVM’s IR makes these fine-grained distinctions, but LLVM is a low-level intermediate representation designed to abstract hardware details for optimization; not a high-level language for human developers. So why does Zig expose this low-level compiler backend abstraction directly to users?</p>
+
+<p>Most of the <code>@</code> style casts are really annoying too because you have to wrap many with <code>@as</code> to assign the correct type since none of them take a type as an input but “infer” it (poorly) from context. I’ve seen some casts in real code which would not be as verbose in virtually any other language. The sea of <code>@</code> is extremely hard to read (let alone scan), and honestly does not give any useful information to the reader, let alone the compiler (which would already know what operations it is doing).</p>
+
+<p>My suggestion, take Go’s type assertion syntax (or something similar) and use that for most of the casts (<code>x.(T)</code>), and then change the semantics of what is allowed to be cast to what. For example, converting from a pointer to an integer, you just first cast the pointer to a <code>usize</code> or <code>isize</code>, and then cast to the integer type that was desired:</p>
+
+<pre><code class="language-zig">// Current
+@as(u64, @intFromPtr(ptr))
+
+// Pseudo-Zig Code
+// Proposed
+ptr.(usize).(u64)
+</code></pre>
+
+<p>I do want to show a real life example of Zig using the wonderful library raylib with regards to all of the different casts:</p>
+
+<pre><code class="language-zig">const gap: f32 = @divTrunc(@as(f32, @floatFromInt(rl.getScreenWidth() - (4 * objectWidth))), 5.0);
+const offsetX: f32 = @as(f32, @floatFromInt(index + 1)) * gap + @as(f32, @floatFromInt(index)) * @as(f32, @floatFromInt(objectWidth));
+</code></pre>
+
+<p>Classic Zig: maximal explicitness, minimal justification.</p>
+
+<p>With my proposed casting syntax, it would be so much easier to read and just as clear what is going on:</p>
+
+<pre><code class="language-zig">// Pseudo-Zig code
+const gap = @divTrunc(rl.getScreenWidth().(f32) - (4 * objectWidth).(f32), 5.0);
+const offsetX = (index + 1).(f32) * gap + index.(f32) * objectWidth.(f32);
+</code></pre>
+
+<p>And the second thing I would do is remove most of the built-in casts. Keeping mostly <code>@bitCast</code>, <code>@alignCast</code>, <code>@errorCast</code>, and maybe <code>@truncate</code>.</p>
+
+<h2 id="atomics"><a href="#atomics">Atomics</a></h2>
+<p>Zig has atomics, but it relies on using the <a href="https://ziglang.org/documentation/master/std/#std.atomic.Value"><code>std.Atomic.Value</code></a> to enforce correctness. The built-in functions like <code>@atomicLoad</code> don’t actually make sure that the pointer being passed is purely an atomic value, and if it is used incorrectly, this invokes illegal behavior. Zig already has <code>volatile</code> pointers, why not add an <code>atomic</code> type too?</p>
+
+<h2 id="endofpart1"><a href="#endofpart1">End of Part 1</a></h2>
+<p>Thank you for reading this part. For <a href="/zig_critique_part_2.html">Part 2</a>, I will be discussing <code>comptime</code>.</p>
+
+  </body>
+</html>
